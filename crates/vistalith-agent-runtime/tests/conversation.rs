@@ -1,6 +1,5 @@
 use vistalith_agent_runtime::{
-    ChatMessage, ConversationEngine, ConversationError, FakeProvider, ModelRequest,
-    RuntimeProvider,
+    ChatMessage, ConversationEngine, ConversationError, FakeProvider, ModelRequest, RuntimeProvider,
 };
 use vistalith_domain::{MessageRole, Namespace, SubjectKind, SubjectRef};
 use vistalith_graph::GraphStore;
@@ -241,6 +240,7 @@ async fn runtime_provider_enum_dispatches() {
                 content: "hi".to_owned(),
             }],
             max_tokens: None,
+            tools: Vec::new(),
         })
         .await
         .unwrap();

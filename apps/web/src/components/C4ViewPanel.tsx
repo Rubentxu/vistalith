@@ -11,8 +11,8 @@ export function C4ViewPanel({ view }: { view: C4View }) {
   const toggle = useSelection((s) => s.toggle);
   const selected = useSelection((s) => s.selected);
   const selectedIdentity = selected
-        ? `${selected.namespace}:${selected.kind}:${selected.id}`
-        : null;
+    ? `${selected.namespace}:${selected.kind}:${selected.id}`
+    : null;
 
   const renderGroup = (title: string, elements: C4View["containers"]) =>
     elements.length > 0 ? (
@@ -26,7 +26,9 @@ export function C4ViewPanel({ view }: { view: C4View }) {
                 className={[
                   "c4-element",
                   `authority-${element.authority}`,
-                  element.identity === selectedIdentity ? "c4-element-selected" : "",
+                  element.identity === selectedIdentity
+                    ? "c4-element-selected"
+                    : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}

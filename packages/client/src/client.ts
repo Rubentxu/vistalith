@@ -1,10 +1,14 @@
 import type {
   AppendedEvent,
   C4View,
+  DraftIntentInput,
   GraphPatch,
   GraphState,
   Health,
+  IntentDetail,
+  IntentSummary,
   PatchOutcome,
+  PromotionOutcome,
   StoredEvent,
   SubjectNode,
   SubjectRef,
@@ -124,6 +128,56 @@ export class VistalithClient {
 
   async c4View(): Promise<C4View> {
     return this.getJson<C4View>("/views/c4");
+  }
+
+  // --- Visual intents (slice 4, SPEC-006) ---
+
+  /** Drafts an intent: never executes; resolution + base revision only. */
+  async draftIntent(input: DraftIntentInput): Promise<IntentSummary> {
+    const body = await this.postJson<{ intent: string; base_revision: number }>(
+      "/intents",
+      input,
+      { okStatus: 201, throwOnError: true },
+    );
+    return {
+      intent: body.intent,
+      target: input.target,
+      gesture: input.gesture,
+      status: "draft",
+      base_revision: body.base_revision,
+      stale: false,
+    };
+  }
+
+  async intents(): Promise<IntentSummary[]> {
+    const body = await this.getJson<{ intents: IntentSummary[] }>("/intents");
+    return body.intents;
+  }
+
+  /** Fetches one intent with its stale-aware preview data. */
+  async intent(id: string): Promise<IntentDetail> {
+    return this.getJson<IntentDetail>(`/intents/${enc(id)}`);
+  }
+
+  /** Explicit promotion. Applied/governed → 200, stale → 409 (normal result). */
+  async promoteIntent(id: string, actor?: string): Promise<PromotionOutcome> {
+    return this.postJson<PromotionOutcome>(
+      `/intents/${enc(id)}/promote`,
+      actor ? { actor } : {},
+      { okStatus: 200, throwOnError: false },
+    );
+  }
+
+  async discardIntent(
+    id: string,
+    reason?: string,
+    actor?: string,
+  ): Promise<void> {
+    await this.postJson<null>(
+      `/intents/${enc(id)}/discard`,
+      { reason, actor },
+      { okStatus: 200, throwOnError: true },
+    );
   }
 
   private async getJson<T>(path: string): Promise<T> {

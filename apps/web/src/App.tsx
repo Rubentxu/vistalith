@@ -4,9 +4,11 @@ import { client } from "./api.ts";
 import { C4ViewPanel } from "./components/C4ViewPanel.tsx";
 import { ChatPanel } from "./components/ChatPanel.tsx";
 import { GraphView } from "./components/GraphView.tsx";
+import { IntentComposer } from "./components/IntentComposer.tsx";
 import { SubjectDetails } from "./components/SubjectDetails.tsx";
 import { SubjectList } from "./components/SubjectList.tsx";
 import { useGraph, useHealth } from "./hooks.ts";
+import { useSelection } from "./state/selection.ts";
 
 type Lens = "graph" | "c4" | "chat";
 
@@ -20,6 +22,7 @@ export function App() {
   const health = useHealth();
   const graph = useGraph();
   const queryClient = useQueryClient();
+  const selected = useSelection((s) => s.selected);
   const [lens, setLens] = useState<Lens>("graph");
 
   const c4 = useQuery({
@@ -77,6 +80,14 @@ export function App() {
           </section>
           <aside className="panel">
             <SubjectDetails graph={graph} />
+            <IntentComposer
+              client={client}
+              selected={selected}
+              onGraphChanged={() => {
+                void queryClient.invalidateQueries({ queryKey: ["graph"] });
+                void queryClient.invalidateQueries({ queryKey: ["c4"] });
+              }}
+            />
           </aside>
         </main>
       ) : lens === "c4" ? (
@@ -90,6 +101,14 @@ export function App() {
           </section>
           <aside className="panel">
             <SubjectDetails graph={graph} />
+            <IntentComposer
+              client={client}
+              selected={selected}
+              onGraphChanged={() => {
+                void queryClient.invalidateQueries({ queryKey: ["graph"] });
+                void queryClient.invalidateQueries({ queryKey: ["c4"] });
+              }}
+            />
           </aside>
         </main>
       ) : (

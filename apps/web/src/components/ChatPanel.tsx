@@ -1,6 +1,9 @@
+import type {
+  ThreadMessage,
+  ThreadSummary,
+  VistalithClient,
+} from "@vistalith/client";
 import { useCallback, useEffect, useState } from "react";
-import type { ThreadMessage, ThreadSummary } from "@vistalith/client";
-import { VistalithClient } from "@vistalith/client";
 import { client as defaultClient } from "../api.ts";
 
 function threadIdOf(identity: string): string {
@@ -112,16 +115,17 @@ export function ChatPanel({
               </button>
             </li>
           ))}
-          {threads.length === 0 ? <li className="empty">no threads yet</li> : null}
+          {threads.length === 0 ? (
+            <li className="empty">no threads yet</li>
+          ) : null}
         </ul>
       </div>
 
       <div className="chat-main">
         <div className="chat-messages" data-testid="chat-messages">
-          {messages.map((message, index) => (
+          {messages.map((message) => (
             <div
-              // Messages are append-only within a thread; index keys are stable here.
-              key={`${message.message}-${index}`}
+              key={message.message}
               className={`chat-message chat-message-${message.role}`}
             >
               <span className="chat-role">{message.role}</span>
@@ -129,7 +133,9 @@ export function ChatPanel({
             </div>
           ))}
           {messages.length === 0 ? (
-            <p className="empty">start or select a thread, then say something</p>
+            <p className="empty">
+              start or select a thread, then say something
+            </p>
           ) : null}
         </div>
 
@@ -144,12 +150,17 @@ export function ChatPanel({
         >
           <input
             value={draft}
-            placeholder={activeThread ? "message the model…" : "create a thread first"}
+            placeholder={
+              activeThread ? "message the model…" : "create a thread first"
+            }
             disabled={!activeThread || busy}
             onChange={(event) => setDraft(event.target.value)}
             aria-label="chat message"
           />
-          <button type="submit" disabled={!activeThread || busy || !draft.trim()}>
+          <button
+            type="submit"
+            disabled={!activeThread || busy || !draft.trim()}
+          >
             {busy ? "…" : "send"}
           </button>
         </form>

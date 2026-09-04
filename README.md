@@ -22,7 +22,8 @@ built and changed. The full planning baseline lives in
 | 1 | Rust workspace, SDDK pin, `SubjectRef`, `VEvent`, in-memory SWG, deterministic replay, `vistalithd` | done |
 | 2 | `@vistalith/client` + web graph lens with cross-lens `SubjectRef` selection | done |
 | 3 | Conversation threads, one provider through Rig, C4 projection | done |
-| 4 | SurrealDB spike (gated), VisualIntent preview, Tauri desktop | pending |
+| 4 | Native tool (`graph_search`) + VisualIntent draft/preview/promote lifecycle | done |
+| 5 | SurrealDB spike (gated), fork/diff, Tauri desktop | pending |
 
 ## Normative baseline decisions
 
@@ -123,7 +124,9 @@ pnpm dev:web        # http://localhost:5173 → talks to vistalithd on :7420
 `GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`, `POST /patches`
 (applied → `200`, rejected → `409`; rejections are durable events),
 `POST|GET /threads`, `GET /threads/{id}`, `POST /threads/{id}/messages`
-(one provider turn per message) and `GET /views/c4`.
+(one provider turn per message), `POST|GET /intents`,
+`GET /intents/{id}`, `POST /intents/{id}/promote`,
+`POST /intents/{id}/discard` (SPEC-006 lifecycle) and `GET /views/c4`.
 
 The web client has three lenses over the same identities: **Graph**
 (subjects/edges), **C4** (projected view) and **Chat** (threads). Selecting a

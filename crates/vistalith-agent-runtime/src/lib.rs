@@ -11,10 +11,16 @@
 //!   gives recorded-external determinism for tests and offline demos.
 
 pub mod conversation;
+pub mod intents;
 pub mod provider;
+pub mod tools;
 
 pub use conversation::{ConversationEngine, ConversationError, ThreadReply};
+pub use intents::{IntentError, Promotion, discard_intent, draft_intent, promote_intent};
 pub use provider::{
-    ChatMessage, FakeProvider, ModelError, ModelProvider, ModelRequest, ModelResponse, RigProvider,
-    RuntimeError, RuntimeProvider,
+    ChatMessage, FakeProvider, FakeStep, ModelError, ModelProvider, ModelRequest, ModelResponse,
+    RigProvider, RuntimeError, RuntimeProvider, ToolCallRequest, ToolContract,
+};
+pub use tools::{
+    Consequence, GraphSearchTool, NativeTool, Permission, ToolDescriptor, ToolError, ToolRegistry,
 };

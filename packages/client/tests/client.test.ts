@@ -206,7 +206,8 @@ describe("conversation + C4 endpoints (slice 3)", () => {
     expect(reply.usage.total_tokens).toBe(12);
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://127.0.0.1:7420/threads/abc-123/messages");
-    expect(JSON.parse(init!.body as string)).toEqual({ content: "hello" });
+    expect(init).toBeDefined();
+    expect(JSON.parse(init?.body as string)).toEqual({ content: "hello" });
   });
 
   it("fetches a thread view with typed items", async () => {
@@ -247,5 +248,69 @@ describe("conversation + C4 endpoints (slice 3)", () => {
     const view = await client.c4View();
     expect(view.revision).toBe(5);
     expect(view.containers[0].identity).toBe("arch:container:payment-service");
+  });
+});
+
+describe("visual intents (slice 4, SPEC-006)", () => {
+  let fetchImpl: ReturnType<typeof vi.fn>;
+  let client: VistalithClient;
+
+  beforeEach(() => {
+    fetchImpl = vi.fn();
+    client = new VistalithClient({
+      baseUrl: "http://127.0.0.1:7420",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+  });
+
+  it("drafts intents without executing anything", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(201, {
+        intent: "agentic:visual-proposal:i1",
+        base_revision: 6,
+      }),
+    );
+    const draft = await client.draftIntent({
+      target: "arch:container:payment-service",
+      gesture: "rename",
+      change: { operations: [] },
+    });
+    expect(draft.status).toBe("draft");
+    expect(draft.base_revision).toBe(6);
+    const [url] = fetchImpl.mock.calls[0] as [string];
+    expect(url).toBe("http://127.0.0.1:7420/intents");
+  });
+
+  it("parses applied and governance outcomes", async () => {
+    fetchImpl.mockResolvedValueOnce(
+      jsonResponse(200, { outcome: "applied", revision: 7 }),
+    );
+    fetchImpl.mockResolvedValueOnce(
+      jsonResponse(200, {
+        outcome: "sddk-governed",
+        subject: "sddk:work-item:TEST-MODEL-001",
+      }),
+    );
+    const applied = await client.promoteIntent("i1");
+    expect(applied).toEqual({ outcome: "applied", revision: 7 });
+
+    const governed = await client.promoteIntent("i2");
+    expect(governed.outcome).toBe("sddk-governed");
+  });
+
+  it("surfaces stale promotion as a normal 409 result", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(409, {
+        outcome: "stale",
+        current_revision: 7,
+        base_revision: 6,
+      }),
+    );
+    const outcome = await client.promoteIntent("i1");
+    expect(outcome.outcome).toBe("stale");
+    if (outcome.outcome === "stale") {
+      expect(outcome.base_revision).toBe(6);
+      expect(outcome.current_revision).toBe(7);
+    }
   });
 });

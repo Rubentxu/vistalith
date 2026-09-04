@@ -83,6 +83,10 @@ pub fn router(state: AppState) -> Router {
         .route("/threads", get(get_threads).post(post_thread))
         .route("/threads/{id}", get(get_thread))
         .route("/threads/{id}/messages", post(post_thread_message))
+        .route("/intents", get(get_intents).post(post_intent))
+        .route("/intents/{id}", get(get_intent))
+        .route("/intents/{id}/promote", post(promote_intent))
+        .route("/intents/{id}/discard", post(discard_intent))
         .route("/views/c4", get(get_c4_view))
         .layer(cors)
         .with_state(state)
@@ -341,4 +345,184 @@ async fn get_c4_view(State(state): State<AppState>) -> Json<serde_json::Value> {
         "components": view.components,
         "relationships": view.relationships,
     }))
+}
+
+// --- Visual intents (slice 4, SPEC-006) -------------------------------------
+
+use vistalith_agent_runtime::{
+    IntentError, Promotion, discard_intent as discard_intent_op, draft_intent,
+    promote_intent as promote_intent_op,
+};
+use vistalith_domain::Actor;
+
+impl From<IntentError> for ApiError {
+    fn from(err: IntentError) -> Self {
+        match &err {
+            IntentError::UnknownIntent(_) | IntentError::UnknownTarget(_) => ApiError {
+                status: StatusCode::NOT_FOUND,
+                message: err.to_string(),
+            },
+            _ => ApiError::bad_request(err.to_string()),
+        }
+    }
+}
+
+fn parse_intent(id: &str) -> Result<SubjectRef, ApiError> {
+    SubjectRef::new(Namespace::Visual, SubjectKind::VisualProposal, id)
+        .map_err(|e| ApiError::bad_request(e.to_string()))
+}
+
+fn body_actor(body: &serde_json::Value) -> Result<Actor, ApiError> {
+    let raw = body
+        .get("actor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("user:api");
+    Actor::new(raw).map_err(|e| ApiError::bad_request(e.to_string()))
+}
+
+fn intent_summary(store: &GraphStore, intent: &SubjectRef) -> Option<serde_json::Value> {
+    let node = store.graph().subject(intent)?;
+    let target = store
+        .graph()
+        .outgoing(intent)
+        .find(|f| f.relation.kind.as_str() == "proposes_change_to")
+        .map(|f| f.relation.to.to_string());
+    let base_revision = node
+        .properties
+        .get("base_revision")
+        .cloned()
+        .unwrap_or(serde_json::json!(0));
+    Some(serde_json::json!({
+        "intent": intent.to_string(),
+        "target": target,
+        "gesture": node.properties.get("gesture").cloned().unwrap_or(serde_json::json!("unknown")),
+        "status": node.properties.get("status").cloned().unwrap_or(serde_json::json!("draft")),
+        "base_revision": base_revision,
+        "stale": base_revision.as_u64() != Some(store.graph().revision()),
+    }))
+}
+
+async fn post_intent(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let target = SubjectRef::parse(
+        body.get("target")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ApiError::bad_request("missing `target` identity string".into()))?,
+    )
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let gesture = body
+        .get("gesture")
+        .and_then(|v| v.as_str())
+        .unwrap_or("annotate")
+        .to_owned();
+    let change = body
+        .get("change")
+        .cloned()
+        .ok_or_else(|| ApiError::bad_request("missing `change` payload".into()))?;
+    let reason = body
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    let actor = body_actor(&body)?;
+
+    let engine_actor = actor;
+    let mut store = state.store.write().await;
+    let intent = draft_intent(&mut store, &target, gesture, change, reason, &engine_actor)?;
+    tracing::info!(intent = %intent, "intent drafted");
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "intent": intent.to_string(),
+            "base_revision": store.graph().revision(),
+        })),
+    ))
+}
+
+async fn get_intents(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let intents: Vec<serde_json::Value> = store
+        .graph()
+        .subjects_of_kind(&SubjectKind::VisualProposal)
+        .filter_map(|node| intent_summary(&store, &node.subject))
+        .collect();
+    Json(serde_json::json!({ "intents": intents }))
+}
+
+async fn get_intent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let intent = parse_intent(&id)?;
+    let store = state.store.read().await;
+    let summary = intent_summary(&store, &intent).ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: format!("unknown intent `{intent}`"),
+    })?;
+    let node = store.graph().subject(&intent).expect("checked above");
+    Ok(Json(serde_json::json!({
+        "summary": summary,
+        "change": node.properties.get("change").cloned().unwrap_or(serde_json::Value::Null),
+        "current_revision": store.graph().revision(),
+    })))
+}
+
+async fn promote_intent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, ApiError> {
+    let intent = parse_intent(&id)?;
+    let actor = body_actor(&body)?;
+    let mut store = state.store.write().await;
+    let outcome = promote_intent_op(&mut store, &intent, &actor)?;
+    tracing::info!(intent = %intent, outcome = ?outcome, "intent promoted");
+    Ok(match outcome {
+        Promotion::Applied { revision } => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "outcome": "applied", "revision": revision })),
+        ),
+        Promotion::RoutedToSddkGovernance { subject } => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "outcome": "sddk-governed",
+                "subject": subject.to_string(),
+                "note": "SDDK-owned truth: convert this semantic change proposal into \
+                         SDDK-governed work through the SDDK flow."
+            })),
+        ),
+        Promotion::Stale {
+            current_revision,
+            base_revision,
+        } => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "outcome": "stale",
+                "current_revision": current_revision,
+                "base_revision": base_revision,
+            })),
+        ),
+        Promotion::RejectedLocally { reason } => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "outcome": "rejected", "reason": reason })),
+        ),
+    }
+    .into_response())
+}
+
+async fn discard_intent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let intent = parse_intent(&id)?;
+    let actor = body_actor(&body)?;
+    let reason = body
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    let mut store = state.store.write().await;
+    discard_intent_op(&mut store, &intent, reason, &actor)?;
+    Ok(Json(serde_json::json!({ "outcome": "discarded" })))
 }

@@ -50,6 +50,14 @@ pub enum EventPayload {
     /// A conversation turn completed: model identity and token usage are
     /// durable (SPEC-008 traceability).
     TurnCompleted(TurnCompleted),
+    /// A native tool was invoked during a turn; the typed call and its
+    /// output are durable (tools are never flattened into prose).
+    ToolInvoked(ToolInvoked),
+    /// A visual gesture produced an intent draft (SPEC-006: drafts only —
+    /// nothing executes until explicit promotion).
+    IntentDrafted(IntentDrafted),
+    /// An intent draft was promoted, routed to SDDK governance or discarded.
+    IntentPromoted(IntentPromoted),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -115,6 +123,60 @@ pub struct TurnCompleted {
     pub usage: crate::model::ModelUsage,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolInvoked {
+    pub thread: SubjectRef,
+    pub tool_call: SubjectRef,
+    /// Tool descriptor id, e.g. `graph_search`.
+    pub tool: String,
+    pub args: serde_json::Value,
+    pub output: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IntentDrafted {
+    pub intent: SubjectRef,
+    /// Semantic subject the gesture resolved to (SPEC-006: intents resolve
+    /// subjects, not renderer shapes).
+    pub target: SubjectRef,
+    /// Gesture type, e.g. `rename`, `connect`, `annotate`.
+    pub gesture: String,
+    /// The proposed change payload (patch operations under `operations`).
+    pub change: serde_json::Value,
+    /// Graph revision the intent was drafted against (stale-awareness).
+    pub base_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// What explicit promotion did with an intent draft.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", content = "detail", rename_all = "kebab-case")]
+pub enum IntentOutcome {
+    /// The change was applied to the Vistalith graph as a governed patch.
+    AppliedToGraph { revision: u64 },
+    /// The target is SDDK-owned: the semantic change proposal is recorded as
+    /// an observation and must become SDDK-governed work through SDDK's own
+    /// flow (SPEC-001 invariant 4; the chat transcript is not SDDK Decision
+    /// Memory).
+    RoutedToSddkGovernance { subject: SubjectRef },
+    /// The graph moved on since the draft; preview is stale, promotion denied.
+    StaleBase { current_revision: u64 },
+    /// Rejected locally by patch validation (unknown subject, etc.).
+    RejectedLocally { reason: String },
+    /// The user discarded the draft.
+    Discarded {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IntentPromoted {
+    pub intent: SubjectRef,
+    pub outcome: IntentOutcome,
+}
+
 fn map_is_empty(map: &BTreeMap<String, serde_json::Value>) -> bool {
     map.is_empty()
 }
@@ -154,6 +216,9 @@ impl VEvent {
             EventPayload::ThreadStarted(_) => "thread-started",
             EventPayload::MessageAppended(_) => "message-appended",
             EventPayload::TurnCompleted(_) => "turn-completed",
+            EventPayload::ToolInvoked(_) => "tool-invoked",
+            EventPayload::IntentDrafted(_) => "intent-drafted",
+            EventPayload::IntentPromoted(_) => "intent-promoted",
         }
     }
 }

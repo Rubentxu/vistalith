@@ -117,3 +117,206 @@ async fn c4_view_projects_architecture_subjects() {
     // No relation between two C4 elements in this fixture.
     assert_eq!(view["relationships"].as_array().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn visual_intent_full_lifecycle_over_http() {
+    let store = vistalith_graph::GraphStore::from_fixture_path(
+        "../vistalith-graph/tests/fixtures/sample-world.json",
+    )
+    .expect("fixture replays");
+    let app = router(AppState::new(store));
+
+    // Gesture -> draft (201), base revision is the draft's own revision (6).
+    let (status, draft) = call(
+        app.clone(),
+        Request::post("/intents")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "target": "arch:container:payment-service",
+                    "gesture": "rename",
+                    "actor": "user:rubentxu",
+                    "change": { "operations": [{
+                        "op": "upsert-subject",
+                        "subject": { "namespace": "arch", "kind": "container", "id": "payment-service" },
+                        "authority": "authoritative",
+                        "provenance": { "source": "user:rubentxu" },
+                        "properties": { "name": "Payments Service" }
+                    }] }
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(draft["base_revision"], 6);
+    let intent_id = draft["intent"]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    // Preview is fresh.
+    let (status, detail) = call(
+        app.clone(),
+        Request::get(format!("/intents/{intent_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["summary"]["stale"], false);
+    assert_eq!(detail["summary"]["status"], "draft");
+
+    // Explicit promotion applies the governed patch.
+    let (status, outcome) = call(
+        app.clone(),
+        Request::post(format!("/intents/{intent_id}/promote"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "actor": "user:rubentxu" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(outcome["outcome"], "applied");
+    assert_eq!(outcome["revision"], 7);
+
+    // The rename landed in the graph.
+    let (status, subject) = call(
+        app,
+        Request::get("/subjects/arch/container/payment-service")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(subject["properties"]["name"], "Payments Service");
+}
+
+#[tokio::test]
+async fn sddk_owned_intent_promotes_to_governance_route() {
+    let store = vistalith_graph::GraphStore::from_fixture_path(
+        "../vistalith-graph/tests/fixtures/sample-world.json",
+    )
+    .expect("fixture replays");
+    let app = router(AppState::new(store));
+
+    let (status, draft) = call(
+        app.clone(),
+        Request::post("/intents")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "target": "sddk:work-item:TEST-MODEL-001",
+                    "gesture": "rename",
+                    "change": { "operations": [{
+                        "op": "upsert-subject",
+                        "subject": { "namespace": "sddk", "kind": "work-item", "id": "TEST-MODEL-001" },
+                        "authority": "authoritative",
+                        "provenance": { "source": "user:api" },
+                        "properties": { "title": "hijack" }
+                    }] }
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let intent_id = draft["intent"]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    let (status, outcome) = call(
+        app,
+        Request::post(format!("/intents/{intent_id}/promote"))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(outcome["outcome"], "sddk-governed");
+    assert_eq!(outcome["subject"], "sddk:work-item:TEST-MODEL-001");
+}
+
+#[tokio::test]
+async fn stale_intent_promotion_returns_conflict() {
+    let store = vistalith_graph::GraphStore::from_fixture_path(
+        "../vistalith-graph/tests/fixtures/sample-world.json",
+    )
+    .expect("fixture replays");
+    let app = router(AppState::new(store));
+
+    let (_, draft) = call(
+        app.clone(),
+        Request::post("/intents")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "target": "arch:container:payment-service",
+                    "gesture": "rename",
+                    "change": { "operations": [] }
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    let intent_id = draft["intent"]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    // The graph moves on: an unrelated advisory subject lands.
+    let (status, _) = call(
+        app.clone(),
+        Request::post("/patches")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "patch_id": "p-unrelated",
+                    "base_revision": 6,
+                    "proposed_by": "user:other",
+                    "operations": [{
+                        "op": "upsert-subject",
+                        "subject": { "namespace": "visual", "kind": "note", "id": "n9" },
+                        "authority": "advisory",
+                        "provenance": { "source": "user:other" }
+                    }]
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Preview now reports stale...
+    let (_, detail) = call(
+        app.clone(),
+        Request::get(format!("/intents/{intent_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(detail["summary"]["stale"], true);
+
+    // ...and promotion is denied with 409.
+    let (status, outcome) = call(
+        app,
+        Request::post(format!("/intents/{intent_id}/promote"))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(outcome["outcome"], "stale");
+}

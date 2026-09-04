@@ -23,7 +23,8 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 1 | Workspace Rust, pin de SDDK, `SubjectRef`, `VEvent`, SWG en memoria, replay determinista, `vistalithd` | hecho |
 | 2 | `@vistalith/client` + lente de grafo web con selección cross-lens por `SubjectRef` | hecho |
 | 3 | Hilos de conversación, un proveedor vía Rig, proyección C4 | hecho |
-| 4 | Spike de SurrealDB (con puerta de decisión), previsualización de VisualIntent, escritorio Tauri | pendiente |
+| 4 | Herramienta nativa (`graph_search`) + ciclo de vida de VisualIntent (draft/preview/promoción) | hecho |
+| 5 | Spike de SurrealDB (con puerta de decisión), fork/diff, escritorio Tauri | pendiente |
 
 ## Decisiones normativas del baseline
 
@@ -127,7 +128,9 @@ API de `vistalithd`: `GET /health`, `GET /graph`, `GET /subjects`,
 `GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`, `POST /patches`
 (aplicado → `200`, rechazado → `409`; los rechazos son eventos durables),
 `POST|GET /threads`, `GET /threads/{id}`, `POST /threads/{id}/messages`
-(un turno de proveedor por mensaje) y `GET /views/c4`.
+(un turno de proveedor por mensaje), `POST|GET /intents`,
+`GET /intents/{id}`, `POST /intents/{id}/promote`,
+`POST /intents/{id}/discard` (ciclo de vida SPEC-006) y `GET /views/c4`.
 
 El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
 (sujetos/aristas), **C4** (vista proyectada) y **Chat** (hilos). Seleccionar

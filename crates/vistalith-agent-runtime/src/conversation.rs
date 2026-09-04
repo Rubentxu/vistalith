@@ -7,12 +7,16 @@
 use thiserror::Error;
 use uuid::Uuid;
 use vistalith_domain::{
-    Actor, EventPayload, MessageAppended, MessageRole, ModelUsage, SubjectKind,
-    SubjectRef, ThreadStarted, TurnCompleted, VEvent,
+    Actor, EventPayload, MessageAppended, MessageRole, ModelUsage, SubjectKind, SubjectRef,
+    ThreadStarted, ToolInvoked, TurnCompleted, VEvent,
 };
 use vistalith_graph::GraphStore;
 
 use crate::provider::{ChatMessage, ModelProvider, ModelRequest};
+use crate::tools::ToolRegistry;
+
+/// Safety bound for the tool-call loop (one native tool round-trips once).
+const MAX_TOOL_ROUNDS: usize = 2;
 
 #[derive(Debug, Error)]
 pub enum ConversationError {
@@ -40,6 +44,7 @@ pub struct ConversationEngine<P: ModelProvider> {
     provider: P,
     system: Option<String>,
     actor: Actor,
+    tools: Option<ToolRegistry>,
 }
 
 impl<P: ModelProvider> ConversationEngine<P> {
@@ -48,7 +53,14 @@ impl<P: ModelProvider> ConversationEngine<P> {
             provider,
             system: None,
             actor: Actor::new("system:vistalithd").expect("static actor"),
+            tools: None,
         }
+    }
+
+    /// Offers the registry's native tools to the model.
+    pub fn with_tools(mut self, tools: ToolRegistry) -> Self {
+        self.tools = Some(tools);
+        self
     }
 
     pub fn with_system_prompt(mut self, system: impl Into<String>) -> Self {
@@ -109,40 +121,127 @@ impl<P: ModelProvider> ConversationEngine<P> {
         let turn = next_turn(store, thread);
         self.append_message(store, thread, MessageRole::User, &content, turn)?;
 
-        let history = thread_history(store, thread);
-        let request = ModelRequest {
+        // Turn loop: at most `MAX_TOOL_ROUNDS` tool-call rounds, then the
+        // final text answer. Every executed call is a durable typed item.
+        let mut rounds = 0usize;
+        let mut total_usage = vistalith_domain::ModelUsage::default();
+        loop {
+            let request = self.build_request(store, thread);
+            let response = self.provider.complete(request).await?;
+            total_usage.input_tokens += response.usage.input_tokens;
+            total_usage.output_tokens += response.usage.output_tokens;
+            total_usage.total_tokens += response.usage.total_tokens;
+
+            if response.is_tool_call() && rounds < MAX_TOOL_ROUNDS {
+                rounds += 1;
+                let tool_results =
+                    self.run_tool_calls(store, thread, turn, &response.tool_calls)?;
+                // The tool outputs join the history as typed tool items; the
+                // model sees them on the next round.
+                let _ = tool_results;
+                continue;
+            }
+
+            let assistant_message = self.append_message(
+                store,
+                thread,
+                MessageRole::Assistant,
+                &response.content,
+                turn,
+            )?;
+
+            store.append(self.event(
+                EventPayload::TurnCompleted(TurnCompleted {
+                    thread: thread.clone(),
+                    turn,
+                    model: response.model,
+                    usage: total_usage,
+                }),
+                vec![thread.clone()],
+            ))?;
+
+            return Ok(ThreadReply {
+                thread: thread.clone(),
+                message: assistant_message,
+                turn,
+                content: response.content,
+                usage: total_usage,
+            });
+        }
+    }
+
+    fn build_request(&self, store: &GraphStore, thread: &SubjectRef) -> ModelRequest {
+        ModelRequest {
             model: self.provider.descriptor().clone(),
             system: self.system.clone(),
-            messages: history,
+            messages: thread_history(store, thread),
             max_tokens: Some(1024),
-        };
-        let response = self.provider.complete(request).await?;
+            tools: self.tool_contracts(),
+        }
+    }
 
-        let assistant_message = self.append_message(
-            store,
-            thread,
-            MessageRole::Assistant,
-            &response.content,
-            turn,
-        )?;
+    fn tool_contracts(&self) -> Vec<crate::provider::ToolContract> {
+        self.tools
+            .as_ref()
+            .map(|registry| {
+                registry
+                    .descriptors()
+                    .into_iter()
+                    .map(|d| crate::provider::ToolContract {
+                        name: d.id.to_owned(),
+                        description: d.description.to_owned(),
+                        parameters: d.parameters,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 
-        store.append(self.event(
-            EventPayload::TurnCompleted(TurnCompleted {
-                thread: thread.clone(),
+    /// Executes tool calls requested by the model: permission check via the
+    /// registry, run, and record one durable `ToolInvoked` item per call.
+    fn run_tool_calls(
+        &self,
+        store: &mut GraphStore,
+        thread: &SubjectRef,
+        turn: u64,
+        calls: &[crate::provider::ToolCallRequest],
+    ) -> Result<Vec<serde_json::Value>, ConversationError> {
+        let mut outputs = Vec::with_capacity(calls.len());
+        for call in calls {
+            let tool_call = SubjectRef::new(
+                vistalith_domain::Namespace::Agentic,
+                SubjectKind::ToolCall,
+                Uuid::now_v7().to_string(),
+            )
+            .expect("generated tool call id is valid");
+            let output = match self.tools.as_ref() {
+                Some(registry) => {
+                    let result = registry.invoke(store.graph(), &call.name, &call.arguments);
+                    result.unwrap_or_else(|err| serde_json::json!({ "error": err.to_string() }))
+                }
+                None => serde_json::json!({ "error": "no tools registered" }),
+            };
+            store.append(self.event(
+                EventPayload::ToolInvoked(ToolInvoked {
+                    thread: thread.clone(),
+                    tool_call: tool_call.clone(),
+                    tool: call.name.clone(),
+                    args: call.arguments.clone(),
+                    output: output.clone(),
+                }),
+                vec![thread.clone(), tool_call],
+            ))?;
+            // The model sees the tool output as the next history item.
+            self.append_message(
+                store,
+                thread,
+                MessageRole::Tool,
+                &serde_json::to_string(&output).unwrap_or_default(),
                 turn,
-                model: response.model,
-                usage: response.usage,
-            }),
-            vec![thread.clone()],
-        ))?;
-
-        Ok(ThreadReply {
-            thread: thread.clone(),
-            message: assistant_message,
-            turn,
-            content: response.content,
-            usage: response.usage,
-        })
+            )?;
+            outputs.push(output);
+        }
+        Ok(outputs)
     }
 
     fn append_message(

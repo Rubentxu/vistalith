@@ -1,9 +1,15 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import type { C4View } from "@vistalith/client";
 import { VistalithClient } from "@vistalith/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { C4ViewPanel } from "../src/components/C4ViewPanel.tsx";
 import { ChatPanel } from "../src/components/ChatPanel.tsx";
-import type { C4View } from "@vistalith/client";
 import { resetSelection } from "./helpers.ts";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -83,7 +89,8 @@ describe("ChatPanel", () => {
           throw new Error(`unexpected fetch: ${key}`);
         })();
       void prefix;
-      const payload = typeof body === "function" ? (body as () => unknown)() : body;
+      const payload =
+        typeof body === "function" ? (body as () => unknown)() : body;
       return Promise.resolve(jsonResponse(status, payload));
     });
     return new VistalithClient({
@@ -104,9 +111,7 @@ describe("ChatPanel", () => {
       [
         "GET /threads",
         {
-          threads: [
-            { thread: "agentic:thread:t1", title: "chat x", turns: 1 },
-          ],
+          threads: [{ thread: "agentic:thread:t1", title: "chat x", turns: 1 }],
         },
       ],
       ["POST /threads", { thread: "agentic:thread:t1" }, 201],

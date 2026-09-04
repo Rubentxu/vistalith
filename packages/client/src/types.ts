@@ -216,6 +216,46 @@ export interface ThreadReply {
   usage: ModelUsage;
 }
 
+// --- Visual intents (SPEC-006) ----------------------------------------------
+
+export interface IntentSummary {
+  intent: string;
+  target: string | null;
+  gesture: string;
+  status:
+    | "draft"
+    | "applied"
+    | "sddk-governed"
+    | "stale"
+    | "rejected"
+    | "discarded"
+    | string;
+  base_revision: number;
+  stale: boolean;
+}
+
+export interface IntentDetail {
+  summary: IntentSummary;
+  change: unknown;
+  current_revision: number;
+}
+
+export interface DraftIntentInput {
+  /** Target SubjectRef identity string (`namespace:kind:id`). */
+  target: string;
+  gesture: string;
+  /** Patch operations payload: `{ operations: [...] }`. */
+  change: unknown;
+  reason?: string;
+  actor?: string;
+}
+
+export type PromotionOutcome =
+  | { outcome: "applied"; revision: number }
+  | { outcome: "sddk-governed"; subject: string; note?: string }
+  | { outcome: "stale"; current_revision: number; base_revision: number }
+  | { outcome: "rejected"; reason: string };
+
 // --- C4 projection ----------------------------------------------------------
 
 export interface C4Element {

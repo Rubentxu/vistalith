@@ -1,5 +1,5 @@
 use vistalith_domain::{
-    AuthorityClass, EventPayload, Namespace, PatchOperation, Provenance,
+    AuthorityClass, EventPayload, IntentOutcome, Namespace, PatchOperation, Provenance,
     RelationFact, RelationKind, RelationRef, SubjectKind, SubjectRef, VEvent,
 };
 
@@ -181,6 +181,105 @@ pub fn apply_event(
                 // Idempotent: many turns may share one model.
                 graph.declare_relation(fact, sequence);
             }
+        }
+        EventPayload::ToolInvoked(invoked) => {
+            if graph.node(&invoked.thread).is_none() {
+                return Err(ProjectionError::UnknownSubject(invoked.thread.to_string()));
+            }
+            if graph.node(&invoked.tool_call).is_some() {
+                return Err(ProjectionError::DuplicateSubject(
+                    invoked.tool_call.to_string(),
+                ));
+            }
+            // Typed tool items stay structured: args and output are durable.
+            graph.upsert_subject(
+                invoked.tool_call.clone(),
+                AuthorityClass::Derived,
+                event_provenance(event),
+                thread_properties(&[
+                    ("tool", serde_json::json!(invoked.tool)),
+                    ("args", invoked.args.clone()),
+                    ("output", invoked.output.clone()),
+                ]),
+                sequence,
+            );
+            let fact = RelationFact {
+                relation: RelationRef::new(
+                    invoked.thread.clone(),
+                    RelationKind::UsedTool,
+                    invoked.tool_call.clone(),
+                )
+                .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                authority: AuthorityClass::Derived,
+                provenance: event_provenance(event),
+            };
+            graph.declare_relation(fact, sequence);
+        }
+        EventPayload::IntentDrafted(drafted) => {
+            if graph.node(&drafted.target).is_none() {
+                return Err(ProjectionError::UnknownSubject(drafted.target.to_string()));
+            }
+            if graph.node(&drafted.intent).is_some() {
+                return Err(ProjectionError::DuplicateSubject(
+                    drafted.intent.to_string(),
+                ));
+            }
+            // SPEC-006: a gesture creates a draft only — advisory by class.
+            let mut properties = thread_properties(&[
+                ("gesture", serde_json::json!(drafted.gesture)),
+                ("change", drafted.change.clone()),
+                ("base_revision", serde_json::json!(drafted.base_revision)),
+                ("status", serde_json::json!("draft")),
+            ]);
+            if let Some(reason) = &drafted.reason {
+                properties.insert("reason".to_owned(), serde_json::json!(reason));
+            }
+            graph.upsert_subject(
+                drafted.intent.clone(),
+                AuthorityClass::Advisory,
+                event_provenance(event),
+                properties,
+                sequence,
+            );
+            let fact = RelationFact {
+                relation: RelationRef::new(
+                    drafted.intent.clone(),
+                    RelationKind::ProposesChangeTo,
+                    drafted.target.clone(),
+                )
+                .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                authority: AuthorityClass::Advisory,
+                provenance: event_provenance(event),
+            };
+            if !graph.declare_relation(fact, sequence) {
+                return Err(ProjectionError::DuplicateRelation(format!(
+                    "{} proposes change to {}",
+                    drafted.intent, drafted.target
+                )));
+            }
+        }
+        EventPayload::IntentPromoted(promoted) => {
+            if graph.node(&promoted.intent).is_none() {
+                return Err(ProjectionError::UnknownSubject(promoted.intent.to_string()));
+            }
+            let status = match &promoted.outcome {
+                IntentOutcome::AppliedToGraph { .. } => "applied",
+                IntentOutcome::RoutedToSddkGovernance { .. } => "sddk-governed",
+                IntentOutcome::StaleBase { .. } => "stale",
+                IntentOutcome::RejectedLocally { .. } => "rejected",
+                IntentOutcome::Discarded { .. } => "discarded",
+            };
+            let mut properties = thread_properties(&[("status", serde_json::json!(status))]);
+            match &promoted.outcome {
+                IntentOutcome::AppliedToGraph { revision } => {
+                    properties.insert("applied_revision".to_owned(), serde_json::json!(revision));
+                }
+                IntentOutcome::RejectedLocally { reason } => {
+                    properties.insert("reject_reason".to_owned(), serde_json::json!(reason));
+                }
+                _ => {}
+            }
+            graph.update_subject(&promoted.intent, &properties, sequence);
         }
     }
     Ok(graph.bump_revision())
