@@ -26,6 +26,7 @@ built and changed. The full planning baseline lives in
 | 5 | SurrealDB spike (gated — **gate closed**, `docs/SURREALDB-SPIKE.md`), thread fork + graph diff/time travel (SPEC-011), Tauri desktop shell | done |
 | 6 | MCP client (rmcp, stdio + Streamable HTTP), unified tool catalog with scoped permission grants (SPEC-009, TOOLS-PERMISSIONS) | done |
 | 7 | Reactive behaviors (SPEC-003), graph algorithms via petgraph (ADR-007), semantic context view (SPEC-005) | done |
+| 8 | Frames — bounded execution contexts — plus Vistalith agents and delegation (`PATTERNS-VIEWS-FRAMES.md`, `AGENTS-DELEGATION.md`) | done |
 
 ## Normative baseline decisions
 
@@ -88,6 +89,11 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    are durable, advisory-class subjects traced to their trigger via
    `causation_id`; replay does not re-run behaviors, so replay stays
    byte-deterministic.
+9. Frames are bounded execution contexts: a frame owns a thread, its
+   permitted tools restrict the unified catalog (bounds never weaken the
+   permission gate), and its turn/token budgets are durable accounting
+   that closes the frame automatically. Closed frames refuse further
+   turns; every bound and outcome is an event.
 
 ## Repository layout
 
@@ -95,7 +101,7 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
 crates/
 ├── vistalith-domain         # SubjectRef, VEvent, patch types, authority classes
 ├── vistalith-graph          # SWG, event projection, patches, behaviors, petgraph algorithms, context view
-├── vistalith-agent-runtime  # conversation engine, provider contracts, MCP client, unified tools
+├── vistalith-agent-runtime  # conversation engine, frames, agents, provider contracts, MCP client, unified tools
 ├── vistalith-server         # `vistalithd` — axum server over the event log + SWG
 └── vistalith-spike-surrealdb  # SPK-003 storage gate spike (own toolchain; excluded)
 packages/
@@ -174,7 +180,13 @@ relation allowlist, depth, authority filters and token budget, with an
 inclusion/exclusion reason for every subject),
 `GET /algorithms/impact/{namespace}/{kind}/{id}`,
 `GET /algorithms/path?from=..&to=..`, `GET /algorithms/cycles` (ADR-007:
-petgraph over an extracted snapshot; `?kinds=` restricts edge kinds).
+petgraph over an extracted snapshot; `?kinds=` restricts edge kinds),
+`POST|GET /agents` (role, instructions, model profile, tools, budgets —
+`AGENTS-DELEGATION.md`), `POST|GET /frames`, `GET /frames/{id}`,
+`POST /frames/{id}/turns`, `POST /frames/{id}/close` (slice 8: bounded
+execution — the frame owns a thread, its `permitted_tools` restrict the
+unified catalog, and its turn/token budgets auto-close it: `completed`,
+`aborted`, `turns-exhausted`, `budget-exhausted`).
 
 Live event appends (`POST /events`) dispatch the built-in reactive
 behaviors (SPEC-003): `impact-advisory` (a change to X advises every `X

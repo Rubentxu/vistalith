@@ -61,7 +61,7 @@ impl ModelResponse {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ModelError {
     #[error("provider `{0}` failed: {1}")]
     ProviderFailed(String, String),

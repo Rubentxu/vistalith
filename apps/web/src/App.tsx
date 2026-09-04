@@ -3,6 +3,7 @@ import { useState } from "react";
 import { client } from "./api.ts";
 import { C4ViewPanel } from "./components/C4ViewPanel.tsx";
 import { ChatPanel } from "./components/ChatPanel.tsx";
+import { FramesPanel } from "./components/FramesPanel.tsx";
 import { GraphView } from "./components/GraphView.tsx";
 import { ImpactPanel } from "./components/ImpactPanel.tsx";
 import { IntentComposer } from "./components/IntentComposer.tsx";
@@ -13,12 +14,13 @@ import { ToolsPanel } from "./components/ToolsPanel.tsx";
 import { useGraph, useHealth } from "./hooks.ts";
 import { useSelection } from "./state/selection.ts";
 
-type Lens = "graph" | "c4" | "chat";
+type Lens = "graph" | "c4" | "chat" | "frames";
 
 const LENSES: { id: Lens; label: string }[] = [
   { id: "graph", label: "Graph" },
   { id: "c4", label: "C4" },
   { id: "chat", label: "Chat" },
+  { id: "frames", label: "Frames" },
 ];
 
 export function App() {
@@ -144,6 +146,15 @@ export function App() {
                 void queryClient.invalidateQueries({ queryKey: ["c4"] });
               }}
             />
+          </aside>
+        </main>
+      ) : lens === "frames" ? (
+        <main className="app-main">
+          <section className="panel chat-panel-host">
+            <FramesPanel client={client} />
+          </section>
+          <aside className="panel chat-tools-host">
+            <ToolsPanel client={client} />
           </aside>
         </main>
       ) : (

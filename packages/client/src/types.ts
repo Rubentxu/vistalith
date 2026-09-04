@@ -474,3 +474,60 @@ export interface SemanticContextView {
   token_budget: number;
   truncated: boolean;
 }
+
+// --- Agents & frames (slice 8) --------------------------------------------------
+
+export interface AgentInfo {
+  agent: string;
+  role: string;
+  instructions: string;
+  tools: string[];
+  budget_turns?: number | null;
+}
+
+export interface FrameSummary {
+  frame: string;
+  goal: string;
+  status:
+    | "open"
+    | "completed"
+    | "aborted"
+    | "turns-exhausted"
+    | "budget-exhausted";
+  turns: number;
+  max_turns: number;
+  used_tokens: number;
+  token_budget: number;
+  permitted_tools: string[];
+  outcome?: string | null;
+  summary?: string | null;
+}
+
+export interface FrameMessage {
+  message: string;
+  role: string;
+  content: string;
+  turn: number;
+}
+
+export interface FrameView {
+  frame: FrameSummary;
+  messages: FrameMessage[];
+}
+
+export interface CreateFrameInput {
+  goal: string;
+  agent?: string;
+  /** Root identities as `ns:kind:id` strings. */
+  subjects?: string[];
+  permitted_tools?: string[];
+  max_turns?: number;
+  token_budget?: number;
+}
+
+export interface FrameTurnReply {
+  frame: string;
+  turn: number;
+  content: { turns_used: number; used_tokens: number };
+  auto_closed: string | null;
+}

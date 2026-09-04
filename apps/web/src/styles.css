@@ -898,3 +898,68 @@ code {
   padding: 0.15rem 0.5rem;
   margin: 0.25rem 0;
 }
+
+/* --- Frames lens (slice 8) --- */
+
+.frames-panel {
+  display: grid;
+  grid-template-columns: 18rem 1fr;
+  height: 100%;
+}
+
+.frames-list {
+  border-right: 1px solid var(--border);
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+
+.frames-create {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.frames-create input {
+  flex: 1;
+  min-width: 0;
+}
+
+.frames-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.frames-item {
+  display: grid;
+  text-align: left;
+  gap: 0.15rem;
+  width: 100%;
+}
+
+.frames-goal {
+  font-size: 0.85rem;
+}
+
+.frames-actions {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.frames-actions button {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.3rem;
+}
+
+.frames-main {
+  display: flex;
+  flex-direction: column;
+}
+
+.frames-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}

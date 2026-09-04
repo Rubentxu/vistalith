@@ -14,12 +14,18 @@
 //!   temporary grants; rmcp is consumed directly (ADR-009).
 
 pub mod conversation;
+pub mod frames;
 pub mod intents;
 pub mod mcp;
 pub mod provider;
 pub mod tools;
 
 pub use conversation::{ConversationEngine, ConversationError, ForkedThread, ThreadReply};
+pub use frames::{
+    FrameError, FrameSpec, FrameTurnReport, close_frame, define_agent, frame_system_prompt,
+    frame_thread, run_frame_turn, start_frame,
+};
+pub use vistalith_domain::FrameOutcome;
 pub use intents::{IntentError, Promotion, discard_intent, draft_intent, promote_intent};
 pub use mcp::{
     ConnectionStatus, McpConnection, McpError, McpManager, McpServerConfig, McpServerStatus,

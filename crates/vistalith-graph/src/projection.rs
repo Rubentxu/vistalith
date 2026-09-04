@@ -323,6 +323,176 @@ pub fn apply_event(
                 )));
             }
         }
+        EventPayload::AgentDefined(defined) => {
+            if graph.node(&defined.agent).is_some() {
+                return Err(ProjectionError::DuplicateSubject(
+                    defined.agent.to_string(),
+                ));
+            }
+            let mut properties = thread_properties(&[
+                ("role", serde_json::json!(defined.role)),
+                ("instructions", serde_json::json!(defined.instructions)),
+                ("tools", serde_json::json!(defined.tools)),
+                (
+                    "expected_outputs",
+                    serde_json::json!(defined.expected_outputs),
+                ),
+            ]);
+            if let Some(model) = &defined.model {
+                properties.insert("model".to_owned(), serde_json::json!(model.to_string()));
+            }
+            if let Some(budget) = defined.budget_turns {
+                properties.insert("budget_turns".to_owned(), serde_json::json!(budget));
+            }
+            graph.upsert_subject(
+                defined.agent.clone(),
+                AuthorityClass::Authoritative,
+                event_provenance(event),
+                properties,
+                sequence,
+            );
+        }
+        EventPayload::FrameStarted(started) => {
+            if graph.node(&started.frame).is_some() {
+                return Err(ProjectionError::DuplicateSubject(
+                    started.frame.to_string(),
+                ));
+            }
+            if let Some(agent) = &started.agent
+                && graph.node(agent).is_none()
+            {
+                return Err(ProjectionError::UnknownSubject(agent.to_string()));
+            }
+            for subject in &started.subjects {
+                if graph.node(subject).is_none() {
+                    return Err(ProjectionError::UnknownSubject(subject.to_string()));
+                }
+            }
+            graph.upsert_subject(
+                started.frame.clone(),
+                AuthorityClass::Authoritative,
+                event_provenance(event),
+                thread_properties(&[
+                    ("goal", serde_json::json!(started.goal)),
+                    ("status", serde_json::json!("open")),
+                    ("max_turns", serde_json::json!(started.max_turns)),
+                    ("token_budget", serde_json::json!(started.token_budget)),
+                    ("turns", serde_json::json!(0)),
+                    ("used_tokens", serde_json::json!(0)),
+                    (
+                        "permitted_tools",
+                        serde_json::json!(started.permitted_tools),
+                    ),
+                ]),
+                sequence,
+            );
+            if let Some(agent) = &started.agent {
+                let fact = RelationFact {
+                    relation: RelationRef::new(
+                        started.frame.clone(),
+                        RelationKind::DelegatedTo,
+                        agent.clone(),
+                    )
+                    .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                    authority: AuthorityClass::Authoritative,
+                    provenance: event_provenance(event),
+                };
+                if !graph.declare_relation(fact, sequence) {
+                    return Err(ProjectionError::DuplicateRelation(format!(
+                        "{} delegated to {}",
+                        started.frame, agent
+                    )));
+                }
+            }
+            for subject in &started.subjects {
+                let fact = RelationFact {
+                    relation: RelationRef::new(
+                        started.frame.clone(),
+                        RelationKind::Mentions,
+                        subject.clone(),
+                    )
+                    .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                    authority: AuthorityClass::Authoritative,
+                    provenance: event_provenance(event),
+                };
+                if !graph.declare_relation(fact, sequence) {
+                    return Err(ProjectionError::DuplicateRelation(format!(
+                        "{} mentions {}",
+                        started.frame, subject
+                    )));
+                }
+            }
+        }
+        EventPayload::FrameTurnCompleted(turn) => {
+            let node = graph
+                .subject(&turn.frame)
+                .ok_or_else(|| ProjectionError::UnknownSubject(turn.frame.to_string()))?;
+            let previous = node
+                .properties
+                .get("used_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            graph.update_subject(
+                &turn.frame,
+                &thread_properties(&[
+                    ("turns", serde_json::json!(turn.turn)),
+                    (
+                        "used_tokens",
+                        serde_json::json!(previous + turn.usage.total_tokens),
+                    ),
+                    ("last_model", serde_json::json!(turn.model.to_string())),
+                ]),
+                sequence,
+            );
+            // Model usage becomes a derived observation, like thread turns.
+            let model_subject = SubjectRef::new(
+                Namespace::Agentic,
+                SubjectKind::Model,
+                turn.model.subject_id(),
+            )
+            .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?;
+            graph.upsert_subject(
+                model_subject.clone(),
+                AuthorityClass::Derived,
+                event_provenance(event),
+                thread_properties(&[
+                    ("provider", serde_json::json!(turn.model.provider)),
+                    ("model", serde_json::json!(turn.model.model)),
+                ]),
+                sequence,
+            );
+            if let Ok(relation) =
+                RelationRef::new(turn.frame.clone(), RelationKind::UsedModel, model_subject)
+            {
+                graph.declare_relation(
+                    RelationFact {
+                        relation,
+                        authority: AuthorityClass::Derived,
+                        provenance: event_provenance(event),
+                    },
+                    sequence,
+                );
+            }
+        }
+        EventPayload::FrameClosed(closed) => {
+            if graph.node(&closed.frame).is_none() {
+                return Err(ProjectionError::UnknownSubject(closed.frame.to_string()));
+            }
+            let outcome = match closed.outcome {
+                vistalith_domain::FrameOutcome::Completed => "completed",
+                vistalith_domain::FrameOutcome::Aborted => "aborted",
+                vistalith_domain::FrameOutcome::TurnsExhausted => "turns-exhausted",
+                vistalith_domain::FrameOutcome::BudgetExhausted => "budget-exhausted",
+            };
+            let mut properties = thread_properties(&[
+                ("status", serde_json::json!(outcome)),
+                ("outcome", serde_json::json!(outcome)),
+            ]);
+            if let Some(summary) = &closed.summary {
+                properties.insert("summary".to_owned(), serde_json::json!(summary));
+            }
+            graph.update_subject(&closed.frame, &properties, sequence);
+        }
         EventPayload::IntentDrafted(drafted) => {
             if graph.node(&drafted.target).is_none() {
                 return Err(ProjectionError::UnknownSubject(drafted.target.to_string()));

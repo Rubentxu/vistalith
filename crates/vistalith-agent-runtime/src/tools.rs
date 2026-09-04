@@ -240,6 +240,23 @@ impl ToolRegistry {
         self.tools.iter().find(|t| t.descriptor.id == id)
     }
 
+    /// A registry whose catalog is the intersection with `allowed` (frame
+    /// `permitted_tools`). Grants are shared: a grant made outside a frame
+    /// still governs inside it — frames bound tools, they never weaken the
+    /// permission gate.
+    pub fn restricted_to(&self, allowed: &[String]) -> ToolRegistry {
+        let tools: Vec<ToolEntry> = self
+            .tools
+            .iter()
+            .filter(|entry| allowed.contains(&entry.descriptor.id))
+            .cloned()
+            .collect();
+        ToolRegistry {
+            tools,
+            grants: Arc::clone(&self.grants),
+        }
+    }
+
     /// The unified catalog (descriptors only, ordered by id).
     pub fn descriptors(&self) -> Vec<ToolDescriptor> {
         let mut out: Vec<ToolDescriptor> =

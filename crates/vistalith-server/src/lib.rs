@@ -16,8 +16,9 @@ use tokio::sync::RwLock;
 use std::sync::Arc as StdArc;
 
 use vistalith_agent_runtime::{
-    ConversationEngine, ConversationError, FakeProvider, GrantStore, McpManager,
-    McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
+    ConversationEngine, ConversationError, FakeProvider, FrameError, FrameOutcome, FrameSpec,
+    GrantStore, McpManager, McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
+    close_frame, frame_system_prompt, run_frame_turn, start_frame,
 };
 use vistalith_domain::{Namespace, RelationKind, SubjectKind, SubjectRef, VEvent};
 use vistalith_graph::{
@@ -83,15 +84,29 @@ impl AppState {
         }
     }
 
-    fn engine(&self) -> ConversationEngine<Arc<RuntimeProvider>> {
+    fn unified_catalog(&self) -> ToolRegistry {
         // The unified catalog: native tools plus every connected MCP
         // server's discovered tools (SPEC-009), one permission gate.
         let mut registry = ToolRegistry::native(self.grants.clone());
         for connection in self.mcp.connections() {
             registry.add_mcp(connection);
         }
+        registry
+    }
+
+    fn engine(&self) -> ConversationEngine<Arc<RuntimeProvider>> {
+        let registry = self.unified_catalog();
+        let system = std::env::var("VISTALITH_SYSTEM_PROMPT").ok();
+        self.engine_with(registry, system)
+    }
+
+    fn engine_with(
+        &self,
+        registry: ToolRegistry,
+        system: Option<String>,
+    ) -> ConversationEngine<Arc<RuntimeProvider>> {
         let mut engine = ConversationEngine::new(Arc::clone(&self.runtime)).with_tools(registry);
-        if let Ok(system) = std::env::var("VISTALITH_SYSTEM_PROMPT") {
+        if let Some(system) = system {
             engine = engine.with_system_prompt(system);
         }
         engine
@@ -128,6 +143,11 @@ pub fn router(state: AppState) -> Router {
         .route("/tools/{id}/revoke", post(post_tool_revoke))
         .route("/mcp/servers", get(get_mcp_servers).post(post_mcp_server))
         .route("/mcp/servers/{name}", delete(delete_mcp_server))
+        .route("/agents", get(get_agents).post(post_agent))
+        .route("/frames", get(get_frames).post(post_frame))
+        .route("/frames/{id}", get(get_frame))
+        .route("/frames/{id}/turns", post(post_frame_turn))
+        .route("/frames/{id}/close", post(post_frame_close))
         .route("/subjects", get(get_subjects))
         .route("/subjects/{namespace}/{kind}/{id}", get(get_subject))
         .route("/events", get(get_events).post(post_event))
@@ -180,6 +200,29 @@ impl From<StoreError> for ApiError {
                 message: err.to_string(),
             },
             _ => ApiError::bad_request(err.to_string()),
+        }
+    }
+}
+
+impl From<FrameError> for ApiError {
+    fn from(err: FrameError) -> Self {
+        match &err {
+            FrameError::UnknownFrame(_) | FrameError::UnknownSubject(_) => ApiError {
+                status: StatusCode::NOT_FOUND,
+                message: err.to_string(),
+            },
+            FrameError::Closed(_)
+            | FrameError::TurnsExhausted(_, _)
+            | FrameError::BudgetExhausted(_, _) => ApiError {
+                status: StatusCode::CONFLICT,
+                message: err.to_string(),
+            },
+            FrameError::NoThread(_) => ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: err.to_string(),
+            },
+            FrameError::Store(inner) => ApiError::from(inner.clone()),
+            FrameError::Conversation(inner) => ApiError::from(inner.clone()),
         }
     }
 }
@@ -759,6 +802,302 @@ async fn get_cycles(
     let snapshot = AlgorithmGraph::extract(store.graph(), kinds.as_deref());
     let report = snapshot.cycles();
     Ok(Json(serde_json::to_value(report).expect("cycle serialization")))
+}
+
+// --- Agents & frames (slice 8, PATTERNS-VIEWS-FRAMES + AGENTS-DELEGATION) ---
+
+async fn post_agent(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let role = body
+        .get("role")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `role` string".to_owned()))?
+        .to_owned();
+    let instructions = body
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let model = match body.get("model").and_then(|v| v.as_str()) {
+        None => None,
+        Some(raw) => {
+            let (provider, name) = raw
+                .split_once('/')
+                .ok_or_else(|| ApiError::bad_request("`model` must be `provider/model`".to_owned()))?;
+            Some(vistalith_domain::ModelDescriptor::new(provider, name))
+        }
+    };
+    let string_list = |key: &str| -> Result<Vec<String>, ApiError> {
+        match body.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(Vec::new()),
+            Some(value) => value
+                .as_array()
+                .ok_or_else(|| ApiError::bad_request(format!("`{key}` must be an array")))?
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| ApiError::bad_request(format!("`{key}` entries must be strings")))
+                })
+                .collect(),
+        }
+    };
+    let tools = string_list("tools")?;
+    let expected_outputs = string_list("expected_outputs")?;
+    let budget_turns = match body.get("budget_turns") {
+        None | Some(serde_json::Value::Null) => None::<u32>,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| ApiError::bad_request("`budget_turns` must be 0..=2^32".to_owned()))?,
+        ),
+    };
+
+    let mut store = state.store.write().await;
+    let agent = vistalith_agent_runtime::define_agent(
+        &mut store,
+        role,
+        instructions,
+        model,
+        tools,
+        budget_turns,
+        expected_outputs,
+    )?;
+    tracing::info!(agent = %agent, "agent defined");
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "agent": agent.to_string() }))))
+}
+
+async fn get_agents(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let agents: Vec<serde_json::Value> = store
+        .graph()
+        .subjects_of_kind(&SubjectKind::Agent)
+        .map(|node| {
+            serde_json::json!({
+                "agent": node.subject.to_string(),
+                "role": node.properties.get("role").cloned().unwrap_or(serde_json::json!("")),
+                "instructions": node.properties.get("instructions").cloned().unwrap_or(serde_json::json!("")),
+                "tools": node.properties.get("tools").cloned().unwrap_or(serde_json::json!([])),
+                "budget_turns": node.properties.get("budget_turns").cloned(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "agents": agents }))
+}
+
+fn frame_summary(node: &vistalith_graph::SubjectNode) -> serde_json::Value {
+    serde_json::json!({
+        "frame": node.subject.to_string(),
+        "goal": node.properties.get("goal").cloned().unwrap_or(serde_json::json!("")),
+        "status": node.properties.get("status").cloned().unwrap_or(serde_json::json!("open")),
+        "turns": node.properties.get("turns").cloned().unwrap_or(serde_json::json!(0)),
+        "max_turns": node.properties.get("max_turns").cloned().unwrap_or(serde_json::json!(0)),
+        "used_tokens": node.properties.get("used_tokens").cloned().unwrap_or(serde_json::json!(0)),
+        "token_budget": node.properties.get("token_budget").cloned().unwrap_or(serde_json::json!(0)),
+        "permitted_tools": node.properties.get("permitted_tools").cloned().unwrap_or(serde_json::json!([])),
+        "outcome": node.properties.get("outcome").cloned(),
+        "summary": node.properties.get("summary").cloned(),
+    })
+}
+
+async fn get_frames(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let frames: Vec<serde_json::Value> = store
+        .graph()
+        .subjects_of_kind(&SubjectKind::Frame)
+        .map(frame_summary)
+        .collect();
+    Json(serde_json::json!({ "frames": frames }))
+}
+
+fn parse_frame(id: &str) -> Result<SubjectRef, ApiError> {
+    SubjectRef::new(Namespace::Agentic, SubjectKind::Frame, id)
+        .map_err(|e| ApiError::bad_request(e.to_string()))
+}
+
+async fn get_frame(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let frame = parse_frame(&id)?;
+    let store = state.store.read().await;
+    if store.graph().subject(&frame).is_none() {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown frame `{frame}`"),
+        });
+    }
+    let summary = store
+        .graph()
+        .subject(&frame)
+        .map(frame_summary)
+        .expect("checked above");
+    let messages: Vec<serde_json::Value> =
+        match vistalith_agent_runtime::frame_thread(&store, &frame) {
+            Ok(thread) => store
+                .graph()
+                .children(&thread)
+                .into_iter()
+                .map(|node| {
+                    serde_json::json!({
+                        "message": node.subject.to_string(),
+                        "role": node.properties.get("role").cloned().unwrap_or(serde_json::json!("user")),
+                        "content": node.properties.get("content").cloned().unwrap_or(serde_json::json!("")),
+                        "turn": node.properties.get("turn").cloned().unwrap_or(serde_json::json!(0)),
+                    })
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+    Ok(Json(serde_json::json!({ "frame": summary, "messages": messages })))
+}
+
+async fn post_frame(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let goal = body
+        .get("goal")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `goal` string".to_owned()))?
+        .to_owned();
+    let agent = match body.get("agent").and_then(|v| v.as_str()) {
+        None => None,
+        Some(raw) => Some(
+            SubjectRef::parse(raw).map_err(|e| ApiError::bad_request(e.to_string()))?,
+        ),
+    };
+    let mut subjects = Vec::new();
+    if let Some(list) = body.get("subjects").and_then(|v| v.as_array()) {
+        for raw in list {
+            let raw = raw
+                .as_str()
+                .ok_or_else(|| ApiError::bad_request("`subjects` entries must be identity strings".to_owned()))?;
+            subjects.push(SubjectRef::parse(raw).map_err(|e| ApiError::bad_request(e.to_string()))?);
+        }
+    }
+    let permitted_tools = match body.get("permitted_tools") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| ApiError::bad_request("`permitted_tools` must be an array".to_owned()))?
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| ApiError::bad_request("`permitted_tools` entries must be strings".to_owned()))
+            })
+            .collect::<Result<Vec<String>, ApiError>>()?,
+    };
+    let max_turns = body
+        .get("max_turns")
+        .and_then(|v| v.as_u64())
+        .and_then(|v| u32::try_from(v).ok())
+        .unwrap_or(5);
+    let token_budget = body.get("token_budget").and_then(|v| v.as_u64()).unwrap_or(8_000);
+
+    let mut store = state.store.write().await;
+    let frame = start_frame(
+        &mut store,
+        FrameSpec {
+            goal,
+            agent,
+            subjects,
+            permitted_tools,
+            max_turns,
+            token_budget,
+        },
+    )?;
+    tracing::info!(frame = %frame, "frame started");
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "frame": frame.to_string(),
+            "thread": vistalith_agent_runtime::frame_thread(&store, &frame)
+                .map(|t| t.to_string())
+                .unwrap_or_default(),
+        })),
+    ))
+}
+
+async fn post_frame_turn(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let frame = parse_frame(&id)?;
+    let content = body
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `content` string".to_owned()))?
+        .to_owned();
+
+    // Bounds and prompt come from the durable frame; the catalog is the
+    // unified one restricted to the frame's permitted tools.
+    let (system, allowed) = {
+        let store = state.store.read().await;
+        let system = frame_system_prompt(&store, &frame)?;
+        let allowed = store
+            .graph()
+            .subject(&frame)
+            .and_then(|node| node.properties.get("permitted_tools").cloned())
+            .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+            .unwrap_or_default();
+        (Some(system), allowed)
+    };
+    let registry = unified_catalog(&state).restricted_to(&allowed);
+    let engine = state.engine_with(registry, system);
+
+    let mut store = state.store.write().await;
+    let report = run_frame_turn(&mut store, &frame, &engine, content).await?;
+    tracing::info!(frame = %frame, turn = report.turn, "frame turn completed");
+    Ok(Json(serde_json::json!({
+        "frame": report.frame.to_string(),
+        "turn": report.turn,
+        "content": {
+            "turns_used": report.turns_used,
+            "used_tokens": report.used_tokens,
+        },
+        "auto_closed": report.auto_closed,
+    })))
+}
+
+async fn post_frame_close(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let frame = parse_frame(&id)?;
+    let outcome = match body
+        .get("outcome")
+        .and_then(|v| v.as_str())
+        .unwrap_or("completed")
+    {
+        "completed" => FrameOutcome::Completed,
+        "aborted" => FrameOutcome::Aborted,
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "unknown outcome `{other}` (completed | aborted)"
+            )));
+        }
+    };
+    let summary = body
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    let mut store = state.store.write().await;
+    close_frame(&mut store, &frame, outcome, summary)?;
+    let node = store
+        .graph()
+        .subject(&frame)
+        .ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown frame `{frame}`"),
+        })?;
+    Ok(Json(frame_summary(node)))
 }
 
 // --- C4 projection (slice 3, IMPLEMENT-NOW item 12) ------------------------

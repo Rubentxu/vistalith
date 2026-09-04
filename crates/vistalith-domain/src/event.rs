@@ -59,6 +59,17 @@ pub enum EventPayload {
     /// A reactive behavior raised an advisory (SPEC-003): behavior outputs
     /// are events, never hidden side effects, and never authoritative.
     AdvisoryRaised(AdvisoryRaised),
+    /// A Vistalith agent was registered (`agentic/AGENTS-DELEGATION.md`):
+    /// role, instructions, model profile, tools and expected outputs.
+    AgentDefined(AgentDefined),
+    /// A frame started (`graph/PATTERNS-VIEWS-FRAMES.md`): a bounded
+    /// execution context — goal, subjects, permitted tools, budgets.
+    FrameStarted(FrameStarted),
+    /// A turn inside a frame completed; frame-level usage accounting.
+    FrameTurnCompleted(FrameTurnCompleted),
+    /// A frame reached a terminal state (explicit close or budget/turn
+    /// exhaustion); closed frames accept no further turns.
+    FrameClosed(FrameClosed),
     /// A visual gesture produced an intent draft (SPEC-006: drafts only —
     /// nothing executes until explicit promotion).
     IntentDrafted(IntentDrafted),
@@ -150,6 +161,73 @@ pub struct ToolInvoked {
     /// fork (SPEC-011 binding preservation). Absent on live calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_of: Option<SubjectRef>,
+}
+
+/// A Vistalith agent (`agentic/AGENTS-DELEGATION.md`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentDefined {
+    pub agent: SubjectRef,
+    pub role: String,
+    pub instructions: String,
+    /// Model profile this agent prefers, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<crate::model::ModelDescriptor>,
+    /// Tool catalog ids the agent may be granted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    /// Turn budget for runs of this agent, if bounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_turns: Option<u32>,
+    /// Names of expected structured outputs (declarative in v1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expected_outputs: Vec<String>,
+}
+
+/// A frame: bounded execution context owned by Vistalith
+/// (`graph/PATTERNS-VIEWS-FRAMES.md`). All bounds are durable frame
+/// properties; turns run inside a frame-owned thread.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FrameStarted {
+    pub frame: SubjectRef,
+    pub goal: String,
+    /// Agent the frame delegates execution to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<SubjectRef>,
+    /// Semantic subjects the frame's context is built from.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subjects: Vec<SubjectRef>,
+    /// Tool catalog ids permitted inside the frame; empty means no tools.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permitted_tools: Vec<String>,
+    pub max_turns: u32,
+    pub token_budget: u64,
+}
+
+/// Frame-level accounting for one turn inside the frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FrameTurnCompleted {
+    pub frame: SubjectRef,
+    pub turn: u64,
+    pub model: crate::model::ModelDescriptor,
+    pub usage: crate::model::ModelUsage,
+}
+
+/// Terminal outcome of a frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FrameOutcome {
+    Completed,
+    Aborted,
+    TurnsExhausted,
+    BudgetExhausted,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FrameClosed {
+    pub frame: SubjectRef,
+    pub outcome: FrameOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 /// An advisory raised by a reactive behavior (SPEC-003). The advisory is a
@@ -268,6 +346,10 @@ impl VEvent {
             EventPayload::ToolInvoked(_) => "tool-invoked",
             EventPayload::ThreadForked(_) => "thread-forked",
             EventPayload::AdvisoryRaised(_) => "advisory-raised",
+            EventPayload::AgentDefined(_) => "agent-defined",
+            EventPayload::FrameStarted(_) => "frame-started",
+            EventPayload::FrameTurnCompleted(_) => "frame-turn-completed",
+            EventPayload::FrameClosed(_) => "frame-closed",
             EventPayload::IntentDrafted(_) => "intent-drafted",
             EventPayload::IntentPromoted(_) => "intent-promoted",
         }

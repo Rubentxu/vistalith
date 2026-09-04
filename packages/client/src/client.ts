@@ -1,9 +1,14 @@
 import type {
+  AgentInfo,
   AppendedEvent,
   C4View,
+  CreateFrameInput,
   DraftIntentInput,
   ForkReply,
   ForkThreadInput,
+  FrameSummary,
+  FrameTurnReply,
+  FrameView,
   GraphAtRevision,
   GraphDiff,
   GraphPatch,
@@ -238,6 +243,66 @@ export class VistalithClient {
       okStatus: 200,
       throwOnError: true,
     });
+  }
+
+  // --- Agents & frames (slice 8) ---
+
+  async createAgent(input: {
+    role: string;
+    instructions?: string;
+    model?: string;
+    tools?: string[];
+    budget_turns?: number;
+    expected_outputs?: string[];
+  }): Promise<{ agent: string }> {
+    return this.postJson<{ agent: string }>("/agents", input, {
+      okStatus: 201,
+      throwOnError: true,
+    });
+  }
+
+  async agents(): Promise<AgentInfo[]> {
+    const body = await this.getJson<{ agents: AgentInfo[] }>("/agents");
+    return body.agents;
+  }
+
+  async createFrame(
+    input: CreateFrameInput,
+  ): Promise<{ frame: string; thread: string }> {
+    return this.postJson<{ frame: string; thread: string }>("/frames", input, {
+      okStatus: 201,
+      throwOnError: true,
+    });
+  }
+
+  async frames(): Promise<FrameSummary[]> {
+    const body = await this.getJson<{ frames: FrameSummary[] }>("/frames");
+    return body.frames;
+  }
+
+  async frame(id: string): Promise<FrameView> {
+    return this.getJson<FrameView>(`/frames/${enc(id)}`);
+  }
+
+  /** Runs one turn inside the frame's bounds. */
+  async frameTurn(id: string, content: string): Promise<FrameTurnReply> {
+    return this.postJson<FrameTurnReply>(
+      `/frames/${enc(id)}/turns`,
+      { content },
+      { okStatus: 200, throwOnError: false },
+    );
+  }
+
+  async closeFrame(
+    id: string,
+    outcome: "completed" | "aborted",
+    summary?: string,
+  ): Promise<FrameSummary> {
+    return this.postJson<FrameSummary>(
+      `/frames/${enc(id)}/close`,
+      { outcome, summary },
+      { okStatus: 200, throwOnError: true },
+    );
   }
 
   // --- C4 projection (slice 3) ---

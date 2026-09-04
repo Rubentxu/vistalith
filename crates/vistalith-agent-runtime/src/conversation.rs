@@ -18,7 +18,7 @@ use crate::tools::ToolRegistry;
 /// Safety bound for the tool-call loop (one native tool round-trips once).
 const MAX_TOOL_ROUNDS: usize = 2;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ConversationError {
     #[error("thread `{0}` does not exist")]
     UnknownThread(String),
@@ -37,6 +37,7 @@ pub struct ThreadReply {
     pub message: SubjectRef,
     pub turn: u64,
     pub content: String,
+    pub model: vistalith_domain::ModelDescriptor,
     pub usage: ModelUsage,
 }
 
@@ -152,6 +153,7 @@ impl<P: ModelProvider> ConversationEngine<P> {
                 continue;
             }
 
+            let model = response.model.clone();
             let assistant_message = self.append_message(
                 store,
                 thread,
@@ -164,7 +166,7 @@ impl<P: ModelProvider> ConversationEngine<P> {
                 EventPayload::TurnCompleted(TurnCompleted {
                     thread: thread.clone(),
                     turn,
-                    model: response.model,
+                    model: model.clone(),
                     usage: total_usage,
                 }),
                 vec![thread.clone()],
@@ -175,6 +177,7 @@ impl<P: ModelProvider> ConversationEngine<P> {
                 message: assistant_message,
                 turn,
                 content: response.content,
+                model,
                 usage: total_usage,
             });
         }

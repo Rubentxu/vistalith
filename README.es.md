@@ -27,6 +27,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 5 | Spike de SurrealDB (con puerta — **puerta cerrada**, `docs/SURREALDB-SPIKE.md`), fork de hilos + diff/Time Travel del grafo (SPEC-011), shell de escritorio Tauri | hecho |
 | 6 | Cliente MCP (rmcp, stdio + Streamable HTTP), catálogo unificado de tools con grants de permisos con scope (SPEC-009, TOOLS-PERMISSIONS) | hecho |
 | 7 | Comportamientos reactivos (SPEC-003), algoritmos de grafo vía petgraph (ADR-007), vista de contexto semántico (SPEC-005) | hecho |
+| 8 | Frames — contextos de ejecución acotados — más agentes Vistalith y delegación (`PATTERNS-VIEWS-FRAMES.md`, `AGENTS-DELEGATION.md`) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -93,6 +94,11 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    `advisory-raised`). Los advisories son sujetos durables de clase advisory
    con traza a su trigger vía `causation_id`; el replay no re-ejecuta los
    behaviors, así que el replay sigue siendo byte-determinista.
+9. Los frames son contextos de ejecución acotados: un frame posee un hilo,
+   sus `permitted_tools` restringen el catálogo unificado (los límites nunca
+   debilitan el gate de permisos) y sus presupuestos de turnos/tokens son
+   contabilidad durable que cierra el frame automáticamente. Los frames
+   cerrados rechazan más turnos; cada límite y resultado es un evento.
 
 ## Estructura del repositorio
 
@@ -100,7 +106,7 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
 crates/
 ├── vistalith-domain         # SubjectRef, VEvent, tipos de patch, clases de autoridad
 ├── vistalith-graph          # SWG, proyección de eventos, patches, behaviors, algoritmos petgraph, vista de contexto
-├── vistalith-agent-runtime  # motor de conversación, contratos de proveedor, cliente MCP, tools unificadas
+├── vistalith-agent-runtime  # motor de conversación, frames, agentes, contratos de proveedor, cliente MCP, tools unificadas
 ├── vistalith-server         # `vistalithd` — servidor axum sobre el log de eventos + SWG
 └── vistalith-spike-surrealdb  # spike SPK-003 de la puerta de almacenamiento (toolchain propia; excluido)
 packages/
@@ -183,7 +189,14 @@ sujeto),
 `GET /algorithms/impact/{namespace}/{kind}/{id}`,
 `GET /algorithms/path?from=..&to=..`, `GET /algorithms/cycles` (ADR-007:
 petgraph sobre una instantánea extraída; `?kinds=` restringe los tipos de
-arista).
+arista),
+`POST|GET /agents` (role, instrucciones, perfil de modelo, tools,
+presupuestos — `AGENTS-DELEGATION.md`), `POST|GET /frames`,
+`GET /frames/{id}`, `POST /frames/{id}/turns`, `POST /frames/{id}/close`
+(slice 8: ejecución acotada — el frame posee un hilo, sus
+`permitted_tools` restringen el catálogo unificado, y sus presupuestos de
+turnos/tokens lo cierran automáticamente: `completed`, `aborted`,
+`turns-exhausted`, `budget-exhausted`).
 
 Los appends de eventos en vivo (`POST /events`) disparan los comportamientos
 reactivos incorporados (SPEC-003): `impact-advisory` (un cambio en X avisa a
