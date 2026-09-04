@@ -105,6 +105,15 @@ impl SemanticWorldGraph {
             .filter(move |f| &f.relation.to == to)
     }
 
+    /// Subjects reachable from `parent` through `contains` edges, ordered by
+    /// identity. Conversation threads use this to reconstruct their items.
+    pub fn children(&self, parent: &SubjectRef) -> Vec<&SubjectNode> {
+        self.outgoing(parent)
+            .filter(|f| f.relation.kind == vistalith_domain::RelationKind::Contains)
+            .filter_map(|f| self.subjects.get(&f.relation.to))
+            .collect()
+    }
+
     pub fn subject_count(&self) -> usize {
         self.subjects.len()
     }

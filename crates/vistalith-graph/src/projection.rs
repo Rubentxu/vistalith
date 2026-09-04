@@ -1,4 +1,7 @@
-use vistalith_domain::{EventPayload, PatchOperation, VEvent};
+use vistalith_domain::{
+    AuthorityClass, EventPayload, Namespace, PatchOperation, Provenance,
+    RelationFact, RelationKind, RelationRef, SubjectKind, SubjectRef, VEvent,
+};
 
 use crate::graph::SemanticWorldGraph;
 
@@ -74,8 +77,131 @@ pub fn apply_event(
             // Durable for auditability only; the graph does not change.
             return Ok(graph.revision());
         }
+        EventPayload::ThreadStarted(started) => {
+            if graph.node(&started.thread).is_some() {
+                return Err(ProjectionError::DuplicateSubject(
+                    started.thread.to_string(),
+                ));
+            }
+            graph.upsert_subject(
+                started.thread.clone(),
+                AuthorityClass::Authoritative,
+                event_provenance(event),
+                thread_properties(&[
+                    ("title", serde_json::json!(started.title)),
+                    ("turns", serde_json::json!(0)),
+                ]),
+                sequence,
+            );
+        }
+        EventPayload::MessageAppended(appended) => {
+            if graph.node(&appended.thread).is_none() {
+                return Err(ProjectionError::UnknownSubject(appended.thread.to_string()));
+            }
+            if graph.node(&appended.message).is_some() {
+                return Err(ProjectionError::DuplicateSubject(
+                    appended.message.to_string(),
+                ));
+            }
+            graph.upsert_subject(
+                appended.message.clone(),
+                AuthorityClass::Authoritative,
+                event_provenance(event),
+                thread_properties(&[
+                    ("role", serde_json::json!(appended.role)),
+                    ("content", serde_json::json!(appended.content)),
+                    ("turn", serde_json::json!(appended.turn)),
+                ]),
+                sequence,
+            );
+            let fact = RelationFact {
+                relation: RelationRef::new(
+                    appended.thread.clone(),
+                    RelationKind::Contains,
+                    appended.message.clone(),
+                )
+                .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                authority: AuthorityClass::Authoritative,
+                provenance: event_provenance(event),
+            };
+            if !graph.declare_relation(fact, sequence) {
+                return Err(ProjectionError::DuplicateRelation(format!(
+                    "thread {} already contains {}",
+                    appended.thread, appended.message
+                )));
+            }
+        }
+        EventPayload::TurnCompleted(turn) => {
+            if graph.node(&turn.thread).is_none() {
+                return Err(ProjectionError::UnknownSubject(turn.thread.to_string()));
+            }
+            // Thread progress is merged: replaying is idempotent per event.
+            graph.update_subject(
+                &turn.thread,
+                &thread_properties(&[
+                    ("turns", serde_json::json!(turn.turn)),
+                    ("last_model", serde_json::json!(turn.model.to_string())),
+                    (
+                        "last_usage",
+                        serde_json::json!({
+                            "input_tokens": turn.usage.input_tokens,
+                            "output_tokens": turn.usage.output_tokens,
+                            "total_tokens": turn.usage.total_tokens,
+                        }),
+                    ),
+                ]),
+                sequence,
+            );
+            // Model usage becomes a derived observation: the model subject and
+            // the `used_model` edge are Vistalith facts about a live call.
+            let model_subject = SubjectRef::new(
+                Namespace::Agentic,
+                SubjectKind::Model,
+                turn.model.subject_id(),
+            )
+            .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?;
+            graph.upsert_subject(
+                model_subject.clone(),
+                AuthorityClass::Derived,
+                event_provenance(event),
+                thread_properties(&[
+                    ("provider", serde_json::json!(turn.model.provider)),
+                    ("model", serde_json::json!(turn.model.model)),
+                ]),
+                sequence,
+            );
+            if let Ok(relation) =
+                RelationRef::new(turn.thread.clone(), RelationKind::UsedModel, model_subject)
+            {
+                let fact = RelationFact {
+                    relation,
+                    authority: AuthorityClass::Derived,
+                    provenance: event_provenance(event),
+                };
+                // Idempotent: many turns may share one model.
+                graph.declare_relation(fact, sequence);
+            }
+        }
     }
     Ok(graph.bump_revision())
+}
+
+fn event_provenance(event: &VEvent) -> Provenance {
+    Provenance {
+        source: event.actor.clone(),
+        source_revision: None,
+        note: None,
+        confidence: None,
+    }
+}
+
+fn thread_properties(
+    entries: &[(&str, serde_json::Value)],
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    entries
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), v.clone()))
+        .collect()
 }
 
 /// Applies patch operations. Callers validate first (`patch::validate_patch`);

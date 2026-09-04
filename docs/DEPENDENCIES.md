@@ -45,7 +45,7 @@ must use this pinned binary, never a `cargo install` of a moving revision.
 | Crate | Line | Where pinned |
 |---|---|---|
 | SDDK crates | v1.82.0 (git) | `scripts/sddk-pin.env` + root `Cargo.toml` |
-| `rig-core` | 0.42.x | root `Cargo.toml [workspace.dependencies]` |
+| `rig-core` | 0.42.0 (consumed by vistalith-agent-runtime, adapter only) | root `Cargo.toml` + `Cargo.lock` |
 | `rmcp` | 3.2.x | root `Cargo.toml [workspace.dependencies]` |
 | `petgraph` | 0.8.x | root `Cargo.toml [workspace.dependencies]` |
 | Tokio/Axum/Serde/Tracing | current stable | root `Cargo.toml [workspace.dependencies]` |

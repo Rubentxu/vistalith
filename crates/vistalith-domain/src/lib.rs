@@ -10,6 +10,7 @@
 mod authority;
 mod error;
 mod event;
+mod model;
 mod patch;
 mod provenance;
 mod relation;
@@ -18,9 +19,11 @@ mod subject;
 pub use authority::AuthorityClass;
 pub use error::DomainError;
 pub use event::{
-    DeterminismClass, EventPayload, PatchApplied, PatchRejected, RelationDeclared, StoredEvent,
-    SubjectDefined, SubjectDeprecated, SubjectUpdated, VEvent,
+    DeterminismClass, EventPayload, MessageAppended, PatchApplied, PatchRejected, RelationDeclared,
+    StoredEvent, SubjectDefined, SubjectDeprecated, SubjectUpdated, ThreadStarted, TurnCompleted,
+    VEvent,
 };
+pub use model::{MessageRole, ModelDescriptor, ModelUsage};
 pub use patch::{PatchId, PatchOperation};
 pub use provenance::{Actor, Provenance};
 pub use relation::{RelationFact, RelationKind, RelationRef};

@@ -71,6 +71,8 @@ export interface Health {
   service: string;
   graph_revision: number;
   events: number;
+  /** Configured conversation provider, e.g. `fake/echo-1`. */
+  provider?: string;
 }
 
 // --- Events (SPEC-002) ------------------------------------------------------
@@ -176,6 +178,68 @@ export interface GraphPatch {
 export type PatchOutcome =
   | { status: "applied"; patch_id: string; revision: number }
   | { status: "rejected"; patch_id: string; reason: string };
+
+// --- Conversation (SPEC-007) -----------------------------------------------
+
+export type MessageRole = "user" | "assistant" | "system" | "tool";
+
+export interface ModelUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface ThreadSummary {
+  thread: string;
+  title: string;
+  turns: number;
+  last_model?: string;
+}
+
+export interface ThreadMessage {
+  message: string;
+  role: MessageRole;
+  content: string;
+  turn: number;
+}
+
+export interface ThreadView {
+  thread: ThreadSummary;
+  messages: ThreadMessage[];
+}
+
+export interface ThreadReply {
+  thread: string;
+  message: string;
+  turn: number;
+  content: string;
+  usage: ModelUsage;
+}
+
+// --- C4 projection ----------------------------------------------------------
+
+export interface C4Element {
+  identity: string;
+  name: string;
+  description?: string;
+  authority: AuthorityClass;
+  deprecated: boolean;
+}
+
+export interface C4Relationship {
+  source: string;
+  target: string;
+  kind: string;
+  authority: AuthorityClass;
+}
+
+export interface C4View {
+  revision: number;
+  systems: C4Element[];
+  containers: C4Element[];
+  components: C4Element[];
+  relationships: C4Relationship[];
+}
 
 // --- Identity helpers -------------------------------------------------------
 

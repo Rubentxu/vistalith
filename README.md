@@ -21,8 +21,8 @@ built and changed. The full planning baseline lives in
 |---|---|---|
 | 1 | Rust workspace, SDDK pin, `SubjectRef`, `VEvent`, in-memory SWG, deterministic replay, `vistalithd` | done |
 | 2 | `@vistalith/client` + web graph lens with cross-lens `SubjectRef` selection | done |
-| 3 | Conversation thread + one LLM provider (Rig) + one C4 projection | next |
-| later | SurrealDB spike (gated), VisualIntent preview, Tauri desktop | pending |
+| 3 | Conversation threads, one provider through Rig, C4 projection | done |
+| 4 | SurrealDB spike (gated), VisualIntent preview, Tauri desktop | pending |
 
 ## Normative baseline decisions
 
@@ -73,9 +73,10 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
 
 ```text
 crates/
-├── vistalith-domain   # SubjectRef, VEvent, patch types, authority classes
-├── vistalith-graph    # in-memory SWG, event projection, patches, deterministic replay
-└── vistalith-server   # `vistalithd` — axum server over the event log + SWG
+├── vistalith-domain         # SubjectRef, VEvent, patch types, authority classes
+├── vistalith-graph          # in-memory SWG, event projection, patches, C4 view, replay
+├── vistalith-agent-runtime  # conversation engine + provider contracts (Rig behind them)
+└── vistalith-server         # `vistalithd` — axum server over the event log + SWG
 packages/
 └── client             # @vistalith/client — TS protocol mirror + typed HTTP client
 apps/
@@ -120,8 +121,18 @@ pnpm dev:web        # http://localhost:5173 → talks to vistalithd on :7420
 
 `vistalithd` API: `GET /health`, `GET /graph`, `GET /subjects`,
 `GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`, `POST /patches`
-(applied → `200`, rejected → `409`; rejections are durable events).
-`VITE_VISTALITHD_URL` points the web client elsewhere.
+(applied → `200`, rejected → `409`; rejections are durable events),
+`POST|GET /threads`, `GET /threads/{id}`, `POST /threads/{id}/messages`
+(one provider turn per message) and `GET /views/c4`.
+
+The web client has three lenses over the same identities: **Graph**
+(subjects/edges), **C4** (projected view) and **Chat** (threads). Selecting a
+subject in any lens propagates the same `SubjectRef`.
+
+Providers: `--provider fake` (offline, default) or `--provider anthropic
+--model claude-haiku-4-5` with `VISTALITH_ANTHROPIC_API_KEY` (read once,
+never returned to any renderer — SPEC-008). `VITE_VISTALITHD_URL` points the
+web client elsewhere.
 
 ## License
 

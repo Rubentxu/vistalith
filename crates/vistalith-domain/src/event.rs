@@ -42,6 +42,14 @@ pub enum EventPayload {
     /// A graph patch was rejected; rejections are durable events too
     /// (SPEC-002: failures and rejected patches are events).
     PatchRejected(PatchRejected),
+    /// A conversation thread was started (SPEC-007: threads are durable
+    /// Vistalith state).
+    ThreadStarted(ThreadStarted),
+    /// A typed conversation item was appended to a thread.
+    MessageAppended(MessageAppended),
+    /// A conversation turn completed: model identity and token usage are
+    /// durable (SPEC-008 traceability).
+    TurnCompleted(TurnCompleted),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -83,6 +91,30 @@ pub struct PatchRejected {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadStarted {
+    pub thread: SubjectRef,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessageAppended {
+    pub thread: SubjectRef,
+    pub message: SubjectRef,
+    pub role: crate::model::MessageRole,
+    pub content: String,
+    /// 1-based turn counter inside the thread.
+    pub turn: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnCompleted {
+    pub thread: SubjectRef,
+    pub turn: u64,
+    pub model: crate::model::ModelDescriptor,
+    pub usage: crate::model::ModelUsage,
+}
+
 fn map_is_empty(map: &BTreeMap<String, serde_json::Value>) -> bool {
     map.is_empty()
 }
@@ -119,6 +151,9 @@ impl VEvent {
             EventPayload::RelationDeclared(_) => "relation-declared",
             EventPayload::PatchApplied(_) => "patch-applied",
             EventPayload::PatchRejected(_) => "patch-rejected",
+            EventPayload::ThreadStarted(_) => "thread-started",
+            EventPayload::MessageAppended(_) => "message-appended",
+            EventPayload::TurnCompleted(_) => "turn-completed",
         }
     }
 }

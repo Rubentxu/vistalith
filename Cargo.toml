@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/vistalith-domain",
     "crates/vistalith-graph",
+    "crates/vistalith-agent-runtime",
     "crates/vistalith-server",
 ]
 # dev/ holds the pinned SDDK checkout: it is its own cargo workspace and is
@@ -49,6 +50,7 @@ sha2 = "0.10"
 # --- Vistalith crates ---
 vistalith-domain = { path = "crates/vistalith-domain" }
 vistalith-graph = { path = "crates/vistalith-graph" }
+vistalith-agent-runtime = { path = "crates/vistalith-agent-runtime" }
 
 [profile.release]
 lto = "thin"

@@ -167,3 +167,85 @@ describe("VistalithClient", () => {
     expect(rejected.reason).toContain("stale");
   });
 });
+
+describe("conversation + C4 endpoints (slice 3)", () => {
+  let fetchImpl: ReturnType<typeof vi.fn>;
+  let client: VistalithClient;
+
+  beforeEach(() => {
+    fetchImpl = vi.fn();
+    client = new VistalithClient({
+      baseUrl: "http://127.0.0.1:7420",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+  });
+
+  it("creates threads and returns the SubjectRef identity", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(201, { thread: "agentic:thread:abc-123" }),
+    );
+    const thread = await client.createThread("Slice-3 chat");
+    expect(thread).toBe("agentic:thread:abc-123");
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ title: "Slice-3 chat" });
+  });
+
+  it("sends a message and returns the completed turn", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(200, {
+        thread: "agentic:thread:abc-123",
+        message: "agentic:message:def-456",
+        turn: 1,
+        content: "here is the answer",
+        usage: { input_tokens: 4, output_tokens: 8, total_tokens: 12 },
+      }),
+    );
+    const reply = await client.sendMessage("abc-123", "hello");
+    expect(reply.turn).toBe(1);
+    expect(reply.usage.total_tokens).toBe(12);
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:7420/threads/abc-123/messages");
+    expect(JSON.parse(init!.body as string)).toEqual({ content: "hello" });
+  });
+
+  it("fetches a thread view with typed items", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(200, {
+        thread: { thread: "agentic:thread:abc-123", title: "t", turns: 1 },
+        messages: [
+          {
+            message: "agentic:message:m1",
+            role: "user",
+            content: "hi",
+            turn: 1,
+          },
+        ],
+      }),
+    );
+    const view = await client.thread("abc-123");
+    expect(view.messages[0].role).toBe("user");
+  });
+
+  it("fetches the C4 projection", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(200, {
+        revision: 5,
+        systems: [],
+        containers: [
+          {
+            identity: "arch:container:payment-service",
+            name: "Payment Service",
+            authority: "authoritative",
+            deprecated: false,
+          },
+        ],
+        components: [],
+        relationships: [],
+      }),
+    );
+    const view = await client.c4View();
+    expect(view.revision).toBe(5);
+    expect(view.containers[0].identity).toBe("arch:container:payment-service");
+  });
+});

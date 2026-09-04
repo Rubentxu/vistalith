@@ -1,35 +1,63 @@
-//! `vistalithd` — the tiny slice-1 server (IMPLEMENT-NOW.md item 7).
+//! `vistalithd` — the Vistalith server.
 //!
-//! In-memory event log + SWG projection behind a minimal HTTP API:
-//! subjects/relations readable, events appendable, patches proposable.
-//! Persistence, conversations, providers and lenses are later slices.
+//! Slice-1: in-memory event log + SWG projection over HTTP (subjects,
+//! relations, events, patches).
+//! Slice-3: conversation threads with one LLM provider behind
+//! Vistalith-owned contracts (SPEC-007/008) and the C4 projection view.
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use tokio::sync::RwLock;
+use vistalith_agent_runtime::{
+    ConversationEngine, ConversationError, FakeProvider, ModelProvider, RuntimeProvider,
+};
 use vistalith_domain::{Namespace, SubjectKind, SubjectRef, VEvent};
-use vistalith_graph::{GraphPatch, GraphStore, PatchOutcome, StoreError, canonical_graph_json};
+use vistalith_graph::{
+    GraphPatch, GraphStore, PatchOutcome, StoreError, c4_view, canonical_graph_json,
+};
 
-/// Shared state: the durable log and its projection behind one lock.
-/// Handlers never await while holding it, so a std lock is enough.
+/// Shared state: the durable log + its projection, and the conversation
+/// runtime. A tokio lock is used because a turn awaits the provider while
+/// holding the write guard.
 #[derive(Clone)]
 pub struct AppState {
     store: Arc<RwLock<GraphStore>>,
+    runtime: Arc<RuntimeProvider>,
 }
 
 impl AppState {
     pub fn new(store: GraphStore) -> Self {
-        AppState {
-            store: Arc::new(RwLock::new(store)),
-        }
+        AppState::with_runtime(
+            store,
+            RuntimeProvider::Fake(FakeProvider::repeating(
+                "This is the offline fake provider: wire a real provider with \
+             --provider anthropic and an API key.",
+            )),
+        )
     }
 
     pub fn empty() -> Self {
         AppState::new(GraphStore::new())
+    }
+
+    pub fn with_runtime(store: GraphStore, runtime: RuntimeProvider) -> Self {
+        AppState {
+            store: Arc::new(RwLock::new(store)),
+            runtime: Arc::new(runtime),
+        }
+    }
+
+    fn engine(&self) -> ConversationEngine<Arc<RuntimeProvider>> {
+        let mut engine = ConversationEngine::new(Arc::clone(&self.runtime));
+        if let Ok(system) = std::env::var("VISTALITH_SYSTEM_PROMPT") {
+            engine = engine.with_system_prompt(system);
+        }
+        engine
     }
 }
 
@@ -52,6 +80,10 @@ pub fn router(state: AppState) -> Router {
         .route("/subjects/{namespace}/{kind}/{id}", get(get_subject))
         .route("/events", get(get_events).post(post_event))
         .route("/patches", post(post_patch))
+        .route("/threads", get(get_threads).post(post_thread))
+        .route("/threads/{id}", get(get_thread))
+        .route("/threads/{id}/messages", post(post_thread_message))
+        .route("/views/c4", get(get_c4_view))
         .layer(cors)
         .with_state(state)
 }
@@ -92,25 +124,42 @@ impl From<StoreError> for ApiError {
     }
 }
 
+impl From<ConversationError> for ApiError {
+    fn from(err: ConversationError) -> Self {
+        match &err {
+            ConversationError::UnknownThread(_) => ApiError {
+                status: StatusCode::NOT_FOUND,
+                message: err.to_string(),
+            },
+            ConversationError::Model(_) => ApiError {
+                status: StatusCode::BAD_GATEWAY,
+                message: err.to_string(),
+            },
+            _ => ApiError::bad_request(err.to_string()),
+        }
+    }
+}
+
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let store = state.store.read().expect("store lock");
+    let store = state.store.read().await;
     Json(serde_json::json!({
         "status": "ok",
         "service": "vistalithd",
         "graph_revision": store.graph().revision(),
         "events": store.log().len(),
+        "provider": state.runtime.descriptor().to_string(),
     }))
 }
 
 async fn get_graph(State(state): State<AppState>) -> Response {
-    let store = state.store.read().expect("store lock");
+    let store = state.store.read().await;
     let body: serde_json::Value =
         serde_json::from_str(&canonical_graph_json(store.graph())).expect("canonical JSON");
     Json(body).into_response()
 }
 
 async fn get_subjects(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let store = state.store.read().expect("store lock");
+    let store = state.store.read().await;
     let subjects: Vec<_> = store.graph().subjects().collect();
     Json(serde_json::json!({ "subjects": subjects }))
 }
@@ -126,7 +175,7 @@ async fn get_subject(
     )
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let store = state.store.read().expect("store lock");
+    let store = state.store.read().await;
     match store.graph().subject(&subject) {
         Some(node) => Ok(Json(node).into_response()),
         None => Err(ApiError {
@@ -137,7 +186,7 @@ async fn get_subject(
 }
 
 async fn get_events(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let store = state.store.read().expect("store lock");
+    let store = state.store.read().await;
     Json(serde_json::json!({ "events": store.log() }))
 }
 
@@ -145,7 +194,7 @@ async fn post_event(
     State(state): State<AppState>,
     Json(event): Json<VEvent>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    let mut store = state.store.write().expect("store lock");
+    let mut store = state.store.write().await;
     let appended = store.append(event)?;
     tracing::info!(sequence = appended.sequence, "event appended");
     Ok((
@@ -162,7 +211,7 @@ async fn post_patch(
     State(state): State<AppState>,
     Json(patch): Json<GraphPatch>,
 ) -> Result<Response, ApiError> {
-    let mut store = state.store.write().expect("store lock");
+    let mut store = state.store.write().await;
     let outcome = store.propose_patch(patch)?;
     tracing::info!(status = ?outcome, "patch resolved");
     Ok(match outcome {
@@ -171,4 +220,125 @@ async fn post_patch(
         // the rejection itself is durable (see GET /events).
         PatchOutcome::Rejected { .. } => (StatusCode::CONFLICT, Json(outcome)).into_response(),
     })
+}
+
+// --- Conversation (slice 3, SPEC-007) --------------------------------------
+
+async fn post_thread(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let title = body
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("untitled thread")
+        .to_owned();
+    let engine = state.engine();
+    let mut store = state.store.write().await;
+    let thread = engine.start_thread(&mut store, title)?;
+    tracing::info!(thread = %thread, "thread started");
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "thread": thread.to_string() })),
+    ))
+}
+
+fn thread_summary(store: &GraphStore, thread: &SubjectRef) -> serde_json::Value {
+    let node = store.graph().subject(thread).expect("thread node exists");
+    serde_json::json!({
+        "thread": thread.to_string(),
+        "title": node.properties.get("title").cloned().unwrap_or(serde_json::json!("untitled")),
+        "turns": node.properties.get("turns").cloned().unwrap_or(serde_json::json!(0)),
+        "last_model": node.properties.get("last_model").cloned(),
+    })
+}
+
+async fn get_threads(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let threads: Vec<serde_json::Value> = store
+        .graph()
+        .subjects_of_kind(&SubjectKind::Thread)
+        .map(|node| thread_summary(&store, &node.subject))
+        .collect();
+    Json(serde_json::json!({ "threads": threads }))
+}
+
+fn parse_thread(id: &str) -> Result<SubjectRef, ApiError> {
+    SubjectRef::new(Namespace::Agentic, SubjectKind::Thread, id)
+        .map_err(|e| ApiError::bad_request(e.to_string()))
+}
+
+async fn get_thread(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let thread = parse_thread(&id)?;
+    let store = state.store.read().await;
+    if store.graph().subject(&thread).is_none() {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown thread `{thread}`"),
+        });
+    }
+    let messages: Vec<serde_json::Value> = store
+        .graph()
+        .children(&thread)
+        .into_iter()
+        .map(|node| {
+            serde_json::json!({
+                "message": node.subject.to_string(),
+                "role": node.properties.get("role").cloned().unwrap_or(serde_json::json!("user")),
+                "content": node.properties.get("content").cloned().unwrap_or(serde_json::json!("")),
+                "turn": node.properties.get("turn").cloned().unwrap_or(serde_json::json!(0)),
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "thread": thread_summary(&store, &thread),
+        "messages": messages,
+    })))
+}
+
+async fn post_thread_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let thread = parse_thread(&id)?;
+    let content = body
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `content` string".to_owned()))?
+        .to_owned();
+    let engine = state.engine();
+    let mut store = state.store.write().await;
+    let reply = engine
+        .send_user_message(&mut store, &thread, content)
+        .await?;
+    tracing::info!(turn = reply.turn, thread = %thread, "turn completed");
+    Ok(Json(serde_json::json!({
+        "thread": thread.to_string(),
+        "message": reply.message.to_string(),
+        "turn": reply.turn,
+        "content": reply.content,
+        "usage": {
+            "input_tokens": reply.usage.input_tokens,
+            "output_tokens": reply.usage.output_tokens,
+            "total_tokens": reply.usage.total_tokens,
+        },
+    })))
+}
+
+// --- C4 projection (slice 3, IMPLEMENT-NOW item 12) ------------------------
+
+async fn get_c4_view(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let view = c4_view(store.graph());
+    Json(serde_json::json!({
+        "revision": view.revision,
+        "systems": view.systems,
+        "containers": view.containers,
+        "components": view.components,
+        "relationships": view.relationships,
+    }))
 }

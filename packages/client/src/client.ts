@@ -1,5 +1,6 @@
 import type {
   AppendedEvent,
+  C4View,
   GraphPatch,
   GraphState,
   Health,
@@ -7,6 +8,9 @@ import type {
   StoredEvent,
   SubjectNode,
   SubjectRef,
+  ThreadReply,
+  ThreadSummary,
+  ThreadView,
   VEvent,
 } from "./types.js";
 import { subjectRefToString } from "./types.js";
@@ -84,6 +88,42 @@ export class VistalithClient {
       okStatus: 200,
       throwOnError: false,
     });
+  }
+
+  // --- Conversation (slice 3) ---
+
+  /** Starts a conversation thread; returns its SubjectRef identity string. */
+  async createThread(title: string): Promise<string> {
+    const body = await this.postJson<{ thread: string }>(
+      "/threads",
+      { title },
+      { okStatus: 201, throwOnError: true },
+    );
+    return body.thread;
+  }
+
+  async threads(): Promise<ThreadSummary[]> {
+    const body = await this.getJson<{ threads: ThreadSummary[] }>("/threads");
+    return body.threads;
+  }
+
+  async thread(id: string): Promise<ThreadView> {
+    return this.getJson<ThreadView>(`/threads/${enc(id)}`);
+  }
+
+  /** Sends a user message and waits for the completed turn. */
+  async sendMessage(id: string, content: string): Promise<ThreadReply> {
+    return this.postJson<ThreadReply>(
+      `/threads/${enc(id)}/messages`,
+      { content },
+      { okStatus: 200, throwOnError: true },
+    );
+  }
+
+  // --- C4 projection (slice 3) ---
+
+  async c4View(): Promise<C4View> {
+    return this.getJson<C4View>("/views/c4");
   }
 
   private async getJson<T>(path: string): Promise<T> {

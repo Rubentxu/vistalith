@@ -22,8 +22,8 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 |---|---|---|
 | 1 | Workspace Rust, pin de SDDK, `SubjectRef`, `VEvent`, SWG en memoria, replay determinista, `vistalithd` | hecho |
 | 2 | `@vistalith/client` + lente de grafo web con selección cross-lens por `SubjectRef` | hecho |
-| 3 | Hilo de conversación + un proveedor LLM (Rig) + una proyección C4 | siguiente |
-| después | Spike de SurrealDB (con puerta de decisión), previsualización de VisualIntent, escritorio Tauri | pendiente |
+| 3 | Hilos de conversación, un proveedor vía Rig, proyección C4 | hecho |
+| 4 | Spike de SurrealDB (con puerta de decisión), previsualización de VisualIntent, escritorio Tauri | pendiente |
 
 ## Decisiones normativas del baseline
 
@@ -76,9 +76,10 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
 
 ```text
 crates/
-├── vistalith-domain   # SubjectRef, VEvent, tipos de patch, clases de autoridad
-├── vistalith-graph    # SWG en memoria, proyección de eventos, patches, replay determinista
-└── vistalith-server   # `vistalithd` — servidor axum sobre el log de eventos + SWG
+├── vistalith-domain         # SubjectRef, VEvent, tipos de patch, clases de autoridad
+├── vistalith-graph          # SWG en memoria, proyección de eventos, patches, vista C4, replay
+├── vistalith-agent-runtime  # motor de conversación + contratos de proveedor (Rig detrás)
+└── vistalith-server         # `vistalithd` — servidor axum sobre el log de eventos + SWG
 packages/
 └── client             # @vistalith/client — espejo TS del protocolo + cliente HTTP tipado
 apps/
@@ -124,7 +125,17 @@ pnpm dev:web        # http://localhost:5173 → habla con vistalithd en :7420
 
 API de `vistalithd`: `GET /health`, `GET /graph`, `GET /subjects`,
 `GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`, `POST /patches`
-(aplicado → `200`, rechazado → `409`; los rechazos son eventos durables).
+(aplicado → `200`, rechazado → `409`; los rechazos son eventos durables),
+`POST|GET /threads`, `GET /threads/{id}`, `POST /threads/{id}/messages`
+(un turno de proveedor por mensaje) y `GET /views/c4`.
+
+El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
+(sujetos/aristas), **C4** (vista proyectada) y **Chat** (hilos). Seleccionar
+un sujeto en cualquier lente propaga el mismo `SubjectRef`.
+
+Proveedores: `--provider fake` (offline, por defecto) o `--provider
+anthropic --model claude-haiku-4-5` con `VISTALITH_ANTHROPIC_API_KEY` (se lee
+una vez y nunca se devuelve a ninguna superficie de render — SPEC-008).
 `VITE_VISTALITHD_URL` apunta el cliente web a otro `vistalithd`.
 
 ## Licencia
