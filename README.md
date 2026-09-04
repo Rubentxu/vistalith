@@ -1,106 +1,128 @@
 # Vistalith
 
-Agentic visual engineering workspace with a **Semantic World Graph** at its
-core, built directly on top of the
-[SDDK](https://github.com/Rubentxu/software-development-decision-kernel)
-crates (ADR-001).
+[English](README.md) | [Español](README.es.md)
 
-Baseline: `vistalith-sddk-baseline-v5-graph-first-2026-09-04/` — read
-[`START-HERE.md`](vistalith-sddk-baseline-v5-graph-first-2026-09-04/START-HERE.md)
-in that folder for the normative reading order.
+**Vistalith is an agentic, visual engineering workspace whose core is a
+Semantic World Graph (SWG), built directly on top of the
+[SDDK](https://github.com/Rubentxu/software-development-decision-kernel)
+crates.** SDDK remains the authority for planning, workflows, decisions and
+evidence; Vistalith adds the agentic interaction plane (conversations,
+providers, tools), the visual workspace and the cross-domain semantic graph
+that ties engineering knowledge together.
+
+This README is **normative**: the rules below govern how this repository is
+built and changed. The full planning baseline lives in
+[`vistalith-sddk-baseline-v5-graph-first-2026-09-04/`](vistalith-sddk-baseline-v5-graph-first-2026-09-04/START-HERE.md)
+(normative reading order in its `START-HERE.md`).
+
+## Status
+
+| Slice | Scope | State |
+|---|---|---|
+| 1 | Rust workspace, SDDK pin, `SubjectRef`, `VEvent`, in-memory SWG, deterministic replay, `vistalithd` | done |
+| 2 | `@vistalith/client` + web graph lens with cross-lens `SubjectRef` selection | done |
+| 3 | Conversation thread + one LLM provider (Rig) + one C4 projection | next |
+| later | SurrealDB spike (gated), VisualIntent preview, Tauri desktop | pending |
+
+## Normative baseline decisions
+
+| # | Rule |
+|---|---|
+| B1 | **SDDK is the core.** Vistalith consumes SDDK Rust crates directly; no internal network/process boundary and no `SddkPort` façade is invented. Compile errors from SDDK upgrades are evidence of real coupling, not something to hide. |
+| B2 | **SDDK stays agnostic.** No Vistalith-specific chat, LLM, Rig, MCP, renderer or client code is pulled up into SDDK. |
+| B3 | **The agentic runtime is Rust.** Providers, context assembly, MCP, tool orchestration, conversation persistence and tracing live in Vistalith Rust crates. |
+| B4 | **TypeScript owns human experience.** Chat rendering, control surfaces and visual lenses are React/TypeScript. |
+| B5 | **Graph-first.** Engineering knowledge is a typed semantic graph with provenance, revision and authority metadata. |
+| B6 | **Event-first.** Vistalith state transitions emit durable events; every materialized view is reconstructible from the durable log. |
+| B7 | **Visual Intent.** A visual gesture may create semantic intent; it never silently performs an engineering effect. |
+| B8 | **Innovations may flow down into SDDK** through explicit pull-up evaluation. |
+| B9 | **ActiveGraph is inspiration, not dependency.** |
+| B10 | **Architecture emerges from UAT evidence.** No plugin marketplaces, CRDT collaboration, graph clustering or distributed services before a measured need. |
+
+## Authority split
+
+**SDDK owns:** planning and work-item truth, workflow/run state, legal next
+actions, policy/gateway, evidence and receipts, decision memory, deterministic
+lifecycle.
+
+**Vistalith adds:** conversations, providers/models, Rig, MCP, agent
+interaction runtime, the visual workspace, the cross-domain Semantic World
+Graph, LLM usage tracing, the client protocol and rendering lenses.
+
+**Rule:** Vistalith never reimplements a capability merely to avoid depending
+on SDDK — if the capability belongs to SDDK, call SDDK directly.
+
+## Hard invariants (enforced in code and tests)
+
+1. Renderer node IDs are never semantic IDs; selection propagates
+   `SubjectRef`s (`namespace:kind:id`, revision-aware but revision excluded
+   from identity) across every lens.
+2. SDDK-owned subjects are never authoritatively mutated by a Vistalith graph
+   patch: such patches are rejected (`must-be-governed-by-sddk`) and must
+   become governed SDDK semantic proposals. Vistalith holds SDDK truth as
+   *derived observations* with provenance.
+3. Graph patches carry a base revision (optimistic concurrency); stale bases
+   are rejected, and rejections are durable events.
+4. The graph is a projection: the event log is the durable source of truth,
+   replay is deterministic (SHA-256 graph digest) and rebuilds are verified
+   against stored revisions.
+5. Every graph fact carries source, source revision, authority class and
+   provenance; advisory facts are distinguishable.
 
 ## Repository layout
 
 ```text
 crates/
-├── vistalith-domain   # SubjectRef (ADR-011), VEvent (SPEC-002), patches, authority
+├── vistalith-domain   # SubjectRef, VEvent, patch types, authority classes
 ├── vistalith-graph    # in-memory SWG, event projection, patches, deterministic replay
-└── vistalith-server   # `vistalithd` — tiny axum server over the event log + SWG
+└── vistalith-server   # `vistalithd` — axum server over the event log + SWG
 packages/
-└── client             # @vistalith/client — TS mirror of the protocol + typed HTTP client
+└── client             # @vistalith/client — TS protocol mirror + typed HTTP client
 apps/
-└── web                # React/Vite graph lens: subjects/edges, selection by SubjectRef
+└── web                # React/Vite graph lens (subjects/edges, SubjectRef selection)
 dev/                   # pinned SDDK checkout + pinned sddk CLI binary (gitignored)
-docs/DEPENDENCIES.md   # every dependency pin and the pin policy
+docs/DEPENDENCIES.md   # dependency pins and pin policy
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
 ```
 
-## First slice status (roadmap/IMPLEMENT-NOW.md)
+## Dependency pinning policy
 
-- [x] Rust workspace, Rust 1.91, edition 2024.
-- [x] Direct SDDK path dependencies pinned at `v1.82.0`.
-- [x] `SubjectRef` — stable, revision-aware identity; renderer IDs are never
-      semantic IDs; identity string `namespace:kind:id`.
-- [x] `VEvent` — durable event with correlation/causation, log-assigned
-      sequence + revision; rejected patches are events too.
-- [x] In-memory SWG (simple ordered maps; petgraph arrives with ADR-007).
-- [x] Deterministic fixture replay: the same raw log always produces the same
-      SHA-256 graph digest; rebuilds are verified against stored revisions.
-- [x] Tiny `vistalithd` (axum): health, graph, subjects, events, patches.
-- [x] `@vistalith/client`: typed TS mirror of `SubjectRef`/`VEvent`/patches +
-      fetch client (pnpm workspace, exact pins, pnpm 12).
-- [x] Web graph lens (`apps/web`): React 19 + Vite 8 + TanStack Query +
-      Zustand; namespace-column SVG of subjects/edges; selection propagates
-      `SubjectRef`s across list, graph and details lenses (never renderer
-      IDs); adjacency highlight, authority-colored facts, advisory edges
-      dashed; CORS enabled on `vistalithd` for the dev origin.
-- [ ] SurrealDB spike (only after semantics/tests — gate pending).
-- [ ] First conversation thread, one provider through Rig, one C4 projection.
+- **Toolchain:** Rust 1.91.0 (`rust-toolchain.toml`), Node ≥ 24, pnpm 12
+  (`packageManager`), exact pins in manifests and lockfiles
+  (`.npmrc` → `save-exact=true`, committed `Cargo.lock` / `pnpm-lock.yaml`).
+- **SDDK** is pinned to one exact tag/commit, materialized in an intermediate
+  machine-local checkout:
 
-## SDDK dependency pinning
+  ```bash
+  scripts/bootstrap-dev.sh                 # clone + checkout the pinned revision
+  scripts/bootstrap-dev.sh --pin v1.83.0   # move the pin (updates scripts/sddk-pin.env)
+  ```
 
-The SDDK revision Vistalith compiles against is fixed in an intermediate
-machine-local site (`dev/`), never on a moving working checkout:
+  All consumed SDDK crates resolve to that single revision; never mix
+  revisions. Only pin refs that exist on the SDDK origin. The pinned `sddk`
+  CLI binary lives in `dev/bin/` with a SHA-256 manifest. An SDDK upgrade is a
+  first-class dependency upgrade: update pin → compile → contract/graph
+  projection tests → master UAT → semantic diff → accept or revert.
+
+## Building and running
 
 ```bash
-scripts/bootstrap-dev.sh              # clone + checkout the pinned revision
-scripts/bootstrap-dev.sh --pin v1.83.0  # move the pin (updates scripts/sddk-pin.env)
-```
-
-- Pin record (committed): `scripts/sddk-pin.env` → currently
-  `v1.82.0` (`d43b120b6e67d467033acd61f7f3c286559a97b7`).
-- Path dependencies are declared once in the root `Cargo.toml`
-  (`[workspace.dependencies]`, `exclude = ["dev"]`).
-- The `sddk` CLI binary built from the pinned checkout is fixed in
-  `dev/bin/` with a `.sha256` and `.pin.json` manifest.
-- Rules: never mix SDDK revisions; only pin refs that exist on the origin;
-  upgrades follow `architecture/DEPENDENCY-MODEL.md` (compile → contract
-  tests → master UAT → semantic diff → accept or revert).
-
-## Running
-
-Rust core (24 tests):
-
-```bash
+# Rust core + server (24 tests)
 cargo test
 cargo run -p vistalith-server --bin vistalithd \
   --fixture crates/vistalith-graph/tests/fixtures/sample-world.json --port 7420
-```
 
-HTTP API: `GET /health`, `GET /graph`, `GET /subjects`,
-`GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`,
-`POST /patches` (applied → `200`, rejected → `409`; rejections are durable
-events, see `GET /events`).
-
-TypeScript workspace (24 tests; Node ≥24, pnpm via `packageManager`):
-
-```bash
+# TypeScript workspace (24 tests)
 pnpm install
-pnpm build       # client (tsc) + web (vite)
-pnpm test        # vitest in both packages
-pnpm lint        # biome
-pnpm dev:web     # http://localhost:5173, talks to vistalithd on :7420
+pnpm build && pnpm test && pnpm lint
+pnpm dev:web        # http://localhost:5173 → talks to vistalithd on :7420
 ```
 
-Set `VITE_VISTALITHD_URL` to point the web client at another `vistalithd`.
+`vistalithd` API: `GET /health`, `GET /graph`, `GET /subjects`,
+`GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`, `POST /patches`
+(applied → `200`, rejected → `409`; rejections are durable events).
+`VITE_VISTALITHD_URL` points the web client elsewhere.
 
-## Invariants enforced in code
+## License
 
-- Graph patches carry the base revision; a stale base is rejected
-  (SPEC-004 optimistic concurrency).
-- Patches that would authoritatively mutate an SDDK-namespace subject are
-  rejected with `must-be-governed-by-sddk`: convert them into governed SDDK
-  semantic proposals (SPEC-001 invariant 4 / SPEC-004). Vistalith holds SDDK
-  truth as *derived observations* with provenance, never as its own authority.
-- Graph digest is canonical (ordered containers), so replay determinism is
-  checkable across processes.
+[MIT](LICENSE)
