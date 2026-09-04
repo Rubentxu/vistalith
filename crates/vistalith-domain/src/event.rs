@@ -53,6 +53,9 @@ pub enum EventPayload {
     /// A native tool was invoked during a turn; the typed call and its
     /// output are durable (tools are never flattened into prose).
     ToolInvoked(ToolInvoked),
+    /// A thread was forked at a turn boundary (SPEC-011): the fork is a new
+    /// durable thread whose copied items keep semantic subject bindings.
+    ThreadForked(ThreadForked),
     /// A visual gesture produced an intent draft (SPEC-006: drafts only —
     /// nothing executes until explicit promotion).
     IntentDrafted(IntentDrafted),
@@ -113,6 +116,11 @@ pub struct MessageAppended {
     pub content: String,
     /// 1-based turn counter inside the thread.
     pub turn: u64,
+    /// Original message this item was copied from in a thread fork
+    /// (SPEC-011: forks preserve semantic subject bindings). Absent on
+    /// ordinary messages, so older logs stay readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_of: Option<SubjectRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -131,6 +139,26 @@ pub struct ToolInvoked {
     pub tool: String,
     pub args: serde_json::Value,
     pub output: serde_json::Value,
+    /// Original tool-call subject this item was copied from in a thread
+    /// fork (SPEC-011 binding preservation). Absent on live calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_of: Option<SubjectRef>,
+}
+
+/// A thread fork (SPEC-011): a new thread carrying the source's durable
+/// items up to `up_to_turn`, linked back with a `forked_from` relation.
+/// Forks are advisory exploration state; promotion into SDDK stays explicit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadForked {
+    /// The newly created fork thread.
+    pub fork: SubjectRef,
+    /// The thread the items were copied from.
+    pub source: SubjectRef,
+    /// Last source turn carried into the fork (1-based; the fork's `turns`
+    /// property equals this).
+    pub up_to_turn: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -217,6 +245,7 @@ impl VEvent {
             EventPayload::MessageAppended(_) => "message-appended",
             EventPayload::TurnCompleted(_) => "turn-completed",
             EventPayload::ToolInvoked(_) => "tool-invoked",
+            EventPayload::ThreadForked(_) => "thread-forked",
             EventPayload::IntentDrafted(_) => "intent-drafted",
             EventPayload::IntentPromoted(_) => "intent-promoted",
         }
@@ -301,5 +330,55 @@ mod tests {
         assert_eq!(json["type"], "relation-declared");
         let back: StoredEvent = serde_json::from_value(json).unwrap();
         assert_eq!(back.event, event);
+    }
+
+    #[test]
+    fn thread_forked_roundtrips() {
+        let event = VEvent {
+            event_id: Uuid::now_v7(),
+            actor: Actor::new("user:ruben").unwrap(),
+            timestamp: OffsetDateTime::parse(
+                "2026-09-04T10:00:00Z",
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap(),
+            subjects: vec![container("thread-2"), container("thread-1")],
+            correlation_id: Uuid::now_v7(),
+            causation_id: None,
+            trace_id: None,
+            payload: EventPayload::ThreadForked(ThreadForked {
+                fork: container("thread-2"),
+                source: container("thread-1"),
+                up_to_turn: 3,
+                note: Some("explore cheaper model".to_owned()),
+            }),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "thread-forked");
+        assert_eq!(json["payload"]["up_to_turn"], 3);
+        let back: VEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn old_logs_without_forked_of_still_parse() {
+        let json = serde_json::json!({
+            "type": "message-appended",
+            "payload": {
+                "thread": { "namespace": "agentic", "kind": "thread", "id": "t1" },
+                "message": { "namespace": "agentic", "kind": "message", "id": "m1" },
+                "role": "user",
+                "content": "hello",
+                "turn": 1
+            }
+        });
+        let payload: EventPayload = serde_json::from_value(json).unwrap();
+        match payload {
+            EventPayload::MessageAppended(appended) => {
+                assert!(appended.forked_of.is_none());
+                assert_eq!(appended.content, "hello");
+            }
+            other => panic!("unexpected payload: {other:?}"),
+        }
     }
 }

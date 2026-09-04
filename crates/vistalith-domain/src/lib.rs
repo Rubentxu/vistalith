@@ -21,7 +21,7 @@ pub use error::DomainError;
 pub use event::{
     DeterminismClass, EventPayload, IntentDrafted, IntentOutcome, IntentPromoted, MessageAppended,
     PatchApplied, PatchRejected, RelationDeclared, StoredEvent, SubjectDefined, SubjectDeprecated,
-    SubjectUpdated, ThreadStarted, ToolInvoked, TurnCompleted, VEvent,
+    SubjectUpdated, ThreadForked, ThreadStarted, ToolInvoked, TurnCompleted, VEvent,
 };
 pub use model::{MessageRole, ModelDescriptor, ModelUsage};
 pub use patch::{PatchId, PatchOperation};

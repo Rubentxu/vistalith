@@ -8,6 +8,7 @@
 //! maps"); graph algorithms arrive with ADR-007 once queries need them.
 
 mod c4;
+mod diff;
 mod digest;
 mod graph;
 mod patch;
@@ -16,6 +17,9 @@ mod store;
 
 pub use c4::{
     C4Element, C4Level, C4Relationship, C4View, c4_view, is_c4_subject, is_structural_relation,
+};
+pub use diff::{
+    GraphDiff, PropertyChange, RelationChange, SubjectChange, diff_graphs,
 };
 pub use digest::{canonical_graph_json, graph_digest};
 pub use graph::{SemanticWorldGraph, SubjectNode};

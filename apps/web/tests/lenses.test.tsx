@@ -156,3 +156,87 @@ describe("ChatPanel", () => {
     expect(screen.getByText("hi there")).toBeInTheDocument();
   });
 });
+
+describe("ChatPanel fork (SPEC-011)", () => {
+  type Handler = [string, unknown] | [string, unknown, number];
+
+  function chatClient(handlers: Handler[]): VistalithClient {
+    const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      const key = `${init?.method ?? "GET"} ${path}`;
+      const entry = handlers.find(([prefix]) => key === prefix);
+      const [prefix, body, status = 200] =
+        entry ??
+        ((): [string, unknown] => {
+          throw new Error(`unexpected fetch: ${key}`);
+        })();
+      void prefix;
+      return Promise.resolve(jsonResponse(status, body));
+    });
+    return new VistalithClient({
+      baseUrl: "http://127.0.0.1:7420",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+  }
+
+  it("forks the active thread and opens the fork", async () => {
+    const client = chatClient([
+      [
+        "GET /threads",
+        {
+          threads: [
+            {
+              thread: "agentic:thread:t1",
+              title: "source thread",
+              turns: 2,
+              forked_from: null,
+            },
+          ],
+        },
+      ],
+      [
+        "POST /threads/t1/fork",
+        {
+          fork: "agentic:thread:f9",
+          source: "agentic:thread:t1",
+          up_to_turn: 2,
+          copied_events: 4,
+        },
+        201,
+      ],
+      [
+        "GET /threads/f9",
+        {
+          thread: {
+            thread: "agentic:thread:f9",
+            title: "source thread (fork ≤ turn 2)",
+            turns: 2,
+            forked_from: "agentic:thread:t1",
+          },
+          messages: [
+            {
+              message: "fm1",
+              role: "user",
+              content: "copied question",
+              turn: 1,
+              forked_of: "agentic:message:m1",
+            },
+          ],
+        },
+      ],
+    ]);
+
+    render(<ChatPanel client={client} />);
+    await waitFor(() => screen.getByText("source thread"));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "fork thread source thread" }),
+    );
+    // The fork opens with its copied items and their forked_of markers.
+    await waitFor(() => screen.getByText("copied question"));
+    expect(screen.getByText(/⎇ forked/)).toBeInTheDocument();
+    // The copied item carries the forked_of marker.
+    expect(screen.getByText("copied question")).toBeInTheDocument();
+    expect(screen.getByText(/⎇ forked/)).toBeInTheDocument();
+  });
+});

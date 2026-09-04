@@ -320,3 +320,116 @@ async fn stale_intent_promotion_returns_conflict() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(outcome["outcome"], "stale");
 }
+
+// --- Fork / diff / time travel (slice 5, SPEC-011) ---------------------------
+
+#[tokio::test]
+async fn thread_fork_diff_and_time_travel_over_http() {
+    let app = router(AppState::new(vistalith_graph::GraphStore::new()));
+
+    // One source thread with one turn.
+    let (_, body) = call(
+        app.clone(),
+        Request::post("/threads")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "title": "to be forked" }"#))
+            .unwrap(),
+    )
+    .await;
+    let thread_id = body["thread"].as_str().unwrap().rsplit(':').next().unwrap().to_owned();
+    let (status, _) = call(
+        app.clone(),
+        Request::post(format!("/threads/{thread_id}/messages"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "content": "turn one" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Revision before the fork; then fork at the latest turn.
+    let (_, graph) = call(
+        app.clone(),
+        Request::get("/graph").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let before_fork = graph["revision"].as_u64().unwrap();
+
+    let (status, fork) = call(
+        app.clone(),
+        Request::post(format!("/threads/{thread_id}/fork"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "note": "explore cheaper model" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(fork["up_to_turn"], 1);
+    assert!(fork["copied_events"].as_u64().unwrap() > 0);
+    let fork_id = fork["fork"].as_str().unwrap().to_owned();
+
+    // The fork appears as a first-class thread, linked back to its source.
+    let (_, threads) = call(
+        app.clone(),
+        Request::get("/threads").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let forked = threads["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["thread"] == serde_json::json!(fork_id))
+        .expect("fork is listed");
+    assert_eq!(
+        forked["forked_from"],
+        serde_json::json!(format!("agentic:thread:{thread_id}"))
+    );
+    assert!(forked["title"]
+        .as_str()
+        .unwrap()
+        .contains("fork ≤ turn 1"));
+
+    // Time travel: the graph at `before_fork` has no fork thread...
+    let (_, past) = call(
+        app.clone(),
+        Request::get(format!("/graph?at_revision={before_fork}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(past["as_of_revision"], serde_json::json!(before_fork));
+    let past_has_fork = past["subjects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["subject"]["id"] == fork_id.rsplit(':').next().unwrap());
+    assert!(!past_has_fork, "the fork must not exist in the past");
+
+    // ...and the structural diff between the two revisions adds exactly it.
+    let (_, diff) = call(
+        app.clone(),
+        Request::get(format!("/diff?from={before_fork}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    // SubjectRefs serialize in the flat wire format ({namespace, kind, id}).
+    let fork_uuid = fork_id.rsplit(':').next().unwrap();
+    let added: Vec<&str> = diff["added_subjects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert!(added.contains(&fork_uuid));
+
+    // Unknown revisions are 4xx, not 500.
+    let (status, _) = call(
+        app,
+        Request::get("/graph?at_revision=99999")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

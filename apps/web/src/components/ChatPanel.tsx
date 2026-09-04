@@ -68,6 +68,19 @@ export function ChatPanel({
     }
   };
 
+  // SPEC-011: forking a thread copies its durable items up to a turn with
+  // `forked_of` bindings preserved; the fork becomes a live thread.
+  const forkThread = async (identity: string) => {
+    setError(null);
+    try {
+      const fork = await client.forkThread(threadIdOf(identity), {});
+      await reloadThreads();
+      await openThread(fork.fork);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
   const send = async () => {
     const content = draft.trim();
     if (!content || !activeThread || busy) return;
@@ -110,8 +123,20 @@ export function ChatPanel({
                   .join(" ")}
                 onClick={() => openThread(thread.thread)}
               >
-                <span className="chat-thread-title">{thread.title}</span>
+                <span className="chat-thread-title">
+                  {thread.forked_from ? "⎇ " : ""}
+                  {thread.title}
+                </span>
                 <span className="chat-thread-turns">{thread.turns} turns</span>
+              </button>
+              <button
+                type="button"
+                className="chat-thread-fork"
+                aria-label={`fork thread ${thread.title}`}
+                title="fork this thread (SPEC-011)"
+                onClick={() => void forkThread(thread.thread)}
+              >
+                fork
               </button>
             </li>
           ))}
@@ -128,7 +153,18 @@ export function ChatPanel({
               key={message.message}
               className={`chat-message chat-message-${message.role}`}
             >
-              <span className="chat-role">{message.role}</span>
+              <span className="chat-role">
+                {message.role}
+                {message.forked_of ? (
+                  <em
+                    className="chat-forked-of"
+                    title={`copied from ${message.forked_of}`}
+                  >
+                    {" "}
+                    ⎇ forked
+                  </em>
+                ) : null}
+              </span>
               <p>{message.content}</p>
             </div>
           ))}

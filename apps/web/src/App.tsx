@@ -7,6 +7,7 @@ import { GraphView } from "./components/GraphView.tsx";
 import { IntentComposer } from "./components/IntentComposer.tsx";
 import { SubjectDetails } from "./components/SubjectDetails.tsx";
 import { SubjectList } from "./components/SubjectList.tsx";
+import { HistoryDiff, TimeTravelBar } from "./components/TimeTravel.tsx";
 import { useGraph, useHealth } from "./hooks.ts";
 import { useSelection } from "./state/selection.ts";
 
@@ -24,6 +25,8 @@ export function App() {
   const queryClient = useQueryClient();
   const selected = useSelection((s) => s.selected);
   const [lens, setLens] = useState<Lens>("graph");
+  // SPEC-011 time travel: when set, the graph lens renders that revision.
+  const [asOf, setAsOf] = useState<number | null>(null);
 
   const c4 = useQuery({
     queryKey: ["c4"],
@@ -31,6 +34,23 @@ export function App() {
     refetchInterval: 2_000,
     retry: 1,
   });
+
+  const history = useQuery({
+    queryKey: ["graph-at", asOf],
+    queryFn: () => client.graphAt(asOf as number),
+    enabled: asOf !== null,
+    retry: 1,
+  });
+  const diff = useQuery({
+    queryKey: ["graph-diff", asOf],
+    queryFn: () => client.diff(asOf as number),
+    enabled: asOf !== null,
+    retry: 1,
+    refetchInterval: 5_000,
+  });
+
+  const shownGraph =
+    asOf !== null && history.data ? history.data : (graph ?? undefined);
 
   return (
     <div className="app">
@@ -73,13 +93,25 @@ export function App() {
       ) : lens === "graph" ? (
         <main className="app-main">
           <aside className="panel">
-            <SubjectList graph={graph} />
+            <SubjectList graph={shownGraph ?? graph} />
           </aside>
           <section className="panel graph-panel">
-            <GraphView graph={graph} />
+            <TimeTravelBar
+              currentRevision={graph.revision}
+              asOf={asOf}
+              onSelect={setAsOf}
+            />
+            {shownGraph ? (
+              <GraphView graph={shownGraph} />
+            ) : (
+              <p className="empty">replaying revision {asOf}…</p>
+            )}
           </section>
           <aside className="panel">
-            <SubjectDetails graph={graph} />
+            <SubjectDetails graph={shownGraph ?? graph} />
+            {asOf !== null && diff.data ? (
+              <HistoryDiff diff={diff.data} from={asOf} />
+            ) : null}
             <IntentComposer
               client={client}
               selected={selected}

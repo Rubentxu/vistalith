@@ -24,7 +24,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 2 | `@vistalith/client` + lente de grafo web con selección cross-lens por `SubjectRef` | hecho |
 | 3 | Hilos de conversación, un proveedor vía Rig, proyección C4 | hecho |
 | 4 | Herramienta nativa (`graph_search`) + ciclo de vida de VisualIntent (draft/preview/promoción) | hecho |
-| 5 | Spike de SurrealDB (con puerta de decisión), fork/diff, escritorio Tauri | pendiente |
+| 5 | Spike de SurrealDB (con puerta — **puerta cerrada**, `docs/SURREALDB-SPIKE.md`), fork de hilos + diff/Time Travel del grafo (SPEC-011), shell de escritorio Tauri | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -72,21 +72,30 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    reconstrucciones se verifican contra las revisiones almacenadas.
 5. Todo hecho del grafo lleva fuente, revisión de la fuente, clase de
    autoridad y procedencia; los hechos advisory son distinguibles.
+6. Los forks (SPEC-011) son estado advisory de exploración: un hilo bifurcado
+   copia sus items con bindings `forked_of` hacia los originales y una
+   relación `forked_from` hacia su fuente; el time travel
+   (`graph?at_revision=R`) es un replay estricto del prefijo del log, y los
+   diffs estructurales son deterministas. La promoción a SDDK sigue siendo
+   explícita y gobernada.
 
 ## Estructura del repositorio
 
 ```text
 crates/
 ├── vistalith-domain         # SubjectRef, VEvent, tipos de patch, clases de autoridad
-├── vistalith-graph          # SWG en memoria, proyección de eventos, patches, vista C4, replay
+├── vistalith-graph          # SWG en memoria, proyección de eventos, patches, vista C4, replay, diff
 ├── vistalith-agent-runtime  # motor de conversación + contratos de proveedor (Rig detrás)
-└── vistalith-server         # `vistalithd` — servidor axum sobre el log de eventos + SWG
+├── vistalith-server         # `vistalithd` — servidor axum sobre el log de eventos + SWG
+└── vistalith-spike-surrealdb  # spike SPK-003 de la puerta de almacenamiento (toolchain propia; excluido)
 packages/
 └── client             # @vistalith/client — espejo TS del protocolo + cliente HTTP tipado
 apps/
-└── web                # lente de grafo React/Vite (subjects/edges, selección por SubjectRef)
+├── web                # lente de grafo React/Vite (subjects/edges, selección por SubjectRef)
+└── desktop            # shell Tauri 2 que envuelve la lente web + ciclo de vida de vistalithd
 dev/                   # checkout de SDDK fijado + binario sddk fijado (gitignored)
 docs/DEPENDENCIES.md   # pins de dependencias y política de pinning
+docs/SURREALDB-SPIKE.md  # informe y veredicto de la puerta SPK-003
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # baseline de planificación (docs)
 ```
 
@@ -113,28 +122,56 @@ vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # baseline de planificación
 ## Compilar y ejecutar
 
 ```bash
-# Núcleo Rust + servidor (24 tests)
+# Núcleo Rust + servidor
 cargo test
 cargo run -p vistalith-server --bin vistalithd \
   --fixture crates/vistalith-graph/tests/fixtures/sample-world.json --port 7420
 
-# Workspace TypeScript (24 tests)
+# Workspace TypeScript
 pnpm install
 pnpm build && pnpm test && pnpm lint
 pnpm dev:web        # http://localhost:5173 → habla con vistalithd en :7420
+
+# Shell de escritorio (Tauri 2; envuelve la misma lente web y puede lanzar vistalithd)
+pnpm install
+pnpm desktop:dev    # requiere cabeceras devel de WebKit/GTK — ver scripts/tauri-env.sh
+
+# Spike de almacenamiento SurrealDB (SPK-003; aislado: toolchain nightly, lockfile propio)
+cd crates/vistalith-spike-surrealdb
+cargo test --features file-engine
+cargo run --release --features file-engine -- --engine surrealkv --nodes 50000
 ```
 
-API de `vistalithd`: `GET /health`, `GET /graph`, `GET /subjects`,
-`GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`, `POST /patches`
-(aplicado → `200`, rechazado → `409`; los rechazos son eventos durables),
-`POST|GET /threads`, `GET /threads/{id}`, `POST /threads/{id}/messages`
-(un turno de proveedor por mensaje), `POST|GET /intents`,
-`GET /intents/{id}`, `POST /intents/{id}/promote`,
+API de `vistalithd`: `GET /health`, `GET /graph` (con `?at_revision=R`
+opcional para time travel), `GET /diff?from=A[&to=B]` (diff estructural del
+grafo), `GET /subjects`, `GET /subjects/{namespace}/{kind}/{id}`,
+`GET|POST /events`, `POST /patches` (aplicado → `200`, rechazado → `409`;
+los rechazos son eventos durables), `POST|GET /threads`, `GET /threads/{id}`,
+`POST /threads/{id}/messages` (un turno de proveedor por mensaje),
+`POST /threads/{id}/fork` (SPEC-011: copia items hasta un turno con bindings
+`forked_of` y enlaza el fork con `forked_from`),
+`POST|GET /intents`, `GET /intents/{id}`, `POST /intents/{id}/promote`,
 `POST /intents/{id}/discard` (ciclo de vida SPEC-006) y `GET /views/c4`.
 
 El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
-(sujetos/aristas), **C4** (vista proyectada) y **Chat** (hilos). Seleccionar
-un sujeto en cualquier lente propaga el mismo `SubjectRef`.
+(sujetos/aristas, con selector de time travel y diff estructural al ver una
+revisión pasada), **C4** (vista proyectada) y **Chat** (hilos, con acción de
+fork por hilo; los items copiados se marcan `⎇ forked`). Seleccionar un
+sujeto en cualquier lente propaga el mismo `SubjectRef`.
+
+## Decisión de almacenamiento (SPK-003)
+
+El spike de SurrealDB ejecutó la puerta completa de
+`technology/GRAPH-STORAGE-DECISION.md` y **la puerta queda cerrada**:
+surrealdb 3.x (tanto la línea 3.2.x del baseline como 3.1.6) no compila con
+ninguna toolchain estable Rust que use este proyecto (su dependencia
+`diskann`, fijada exacta, dispara rust-lang/rust#100013); en nightly el
+motor midió bien (rebuild determinista, traversal de 3 saltos con p95
+0,35 ms a 1M de relaciones, reapertura durable, digest idéntico a la
+proyección del SWG), pero adoptarlo exigiría bifurcar la toolchain. El
+almacenamiento sigue siendo el **Candidato B**: log de eventos durable en
+JSON + proyección estricta en memoria. Evidencia completa y reproducción:
+[`docs/SURREALDB-SPIKE.md`](docs/SURREALDB-SPIKE.md).
 
 Proveedores: `--provider fake` (offline, por defecto) o `--provider
 anthropic --model claude-haiku-4-5` con `VISTALITH_ANTHROPIC_API_KEY` (se lee

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Vistalith",
+  "version": "0.1.0",
+  "identifier": "dev.vistalith.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --filter web dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm --filter web build",
+    "frontendDist": "../../web/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Vistalith",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 960,
+        "minHeight": 620
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm"],
+    "icon": ["icons/icon.png"]
+  }
+}

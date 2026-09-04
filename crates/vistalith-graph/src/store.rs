@@ -19,6 +19,8 @@ pub enum StoreError {
     Projection(#[from] ProjectionError),
     #[error("serialization error: {0}")]
     Serialization(String),
+    #[error("unknown revision {0}: the log only reaches revision {1}")]
+    UnknownRevision(u64, u64),
 }
 
 /// Log-assigned coordinates of a committed event.
@@ -148,6 +150,33 @@ impl GraphStore {
     /// SHA-256 fingerprint of the projected graph state.
     pub fn digest(&self) -> String {
         graph_digest(&self.graph)
+    }
+
+    /// Time travel: replays the durable log into a fresh projection stopped
+    /// at `revision` (SPEC-011: "graph at event/revision"). Every stored
+    /// entry carries the revision it produced, so the cut is exact even
+    /// across revision-neutral events such as patch rejections.
+    pub fn graph_at_revision(&self, revision: u64) -> Result<SemanticWorldGraph, StoreError> {
+        let current = self.graph.revision();
+        if revision > current {
+            return Err(StoreError::UnknownRevision(revision, current));
+        }
+        let mut graph = SemanticWorldGraph::new();
+        for stored in self.log.entries() {
+            if stored.revision > revision {
+                break;
+            }
+            crate::projection::apply_event(&mut graph, &stored.event, stored.sequence)?;
+        }
+        debug_assert_eq!(graph.revision(), revision);
+        Ok(graph)
+    }
+
+    /// Structural diff between two revisions of this log (SPEC-011).
+    pub fn diff_revisions(&self, from: u64, to: u64) -> Result<crate::diff::GraphDiff, StoreError> {
+        let from_graph = self.graph_at_revision(from)?;
+        let to_graph = self.graph_at_revision(to)?;
+        Ok(crate::diff::diff_graphs(&from_graph, &to_graph))
     }
 
     /// Strict replay: rebuilds the store from raw events, assigning sequences

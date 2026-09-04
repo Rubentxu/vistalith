@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -18,7 +18,7 @@ use vistalith_agent_runtime::{
 };
 use vistalith_domain::{Namespace, SubjectKind, SubjectRef, VEvent};
 use vistalith_graph::{
-    GraphPatch, GraphStore, PatchOutcome, StoreError, c4_view, canonical_graph_json,
+    GraphDiff, GraphPatch, GraphStore, PatchOutcome, StoreError, c4_view, canonical_graph_json,
 };
 
 /// Shared state: the durable log + its projection, and the conversation
@@ -76,6 +76,8 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/graph", get(get_graph))
+        .route("/diff", get(get_diff))
+        .route("/threads/{id}/fork", post(post_thread_fork))
         .route("/subjects", get(get_subjects))
         .route("/subjects/{namespace}/{kind}/{id}", get(get_subject))
         .route("/events", get(get_events).post(post_event))
@@ -155,11 +157,52 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-async fn get_graph(State(state): State<AppState>) -> Response {
+async fn get_graph(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, ApiError> {
     let store = state.store.read().await;
-    let body: serde_json::Value =
-        serde_json::from_str(&canonical_graph_json(store.graph())).expect("canonical JSON");
-    Json(body).into_response()
+    match params.get("at_revision") {
+        None => {
+            let body: serde_json::Value =
+                serde_json::from_str(&canonical_graph_json(store.graph())).expect("canonical JSON");
+            Ok(Json(body).into_response())
+        }
+        // SPEC-011 time travel: render the graph as of an earlier revision.
+        Some(raw) => {
+            let revision: u64 = raw
+                .parse()
+                .map_err(|e| ApiError::bad_request(format!("invalid `at_revision`: {e}")))?;
+            let graph = store.graph_at_revision(revision)?;
+            let mut body: serde_json::Value =
+                serde_json::from_str(&canonical_graph_json(&graph)).expect("canonical JSON");
+            body["as_of_revision"] = serde_json::json!(graph.revision());
+            Ok(Json(body).into_response())
+        }
+    }
+}
+
+async fn get_diff(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<GraphDiff>, ApiError> {
+    let parse = |key: &str| -> Result<Option<u64>, ApiError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(raw) => raw
+                .parse()
+                .map(Some)
+                .map_err(|e| ApiError::bad_request(format!("invalid `{key}`: {e}"))),
+        }
+    };
+    let from = parse("from")?.unwrap_or(0);
+    let store = state.store.read().await;
+    let to = match parse("to")? {
+        Some(to) => to,
+        None => store.graph().revision(),
+    };
+    let diff = store.diff_revisions(from, to)?;
+    Ok(Json(diff))
 }
 
 async fn get_subjects(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -254,6 +297,7 @@ fn thread_summary(store: &GraphStore, thread: &SubjectRef) -> serde_json::Value 
         "title": node.properties.get("title").cloned().unwrap_or(serde_json::json!("untitled")),
         "turns": node.properties.get("turns").cloned().unwrap_or(serde_json::json!(0)),
         "last_model": node.properties.get("last_model").cloned(),
+        "forked_from": node.properties.get("forked_from").cloned(),
     })
 }
 
@@ -294,6 +338,7 @@ async fn get_thread(
                 "role": node.properties.get("role").cloned().unwrap_or(serde_json::json!("user")),
                 "content": node.properties.get("content").cloned().unwrap_or(serde_json::json!("")),
                 "turn": node.properties.get("turn").cloned().unwrap_or(serde_json::json!(0)),
+                "forked_of": node.properties.get("forked_of").cloned(),
             })
         })
         .collect();
@@ -331,6 +376,38 @@ async fn post_thread_message(
             "total_tokens": reply.usage.total_tokens,
         },
     })))
+}
+
+// --- Fork / diff / time travel (slice 5, SPEC-011) --------------------------
+
+async fn post_thread_fork(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let source = parse_thread(&id)?;
+    let up_to_turn = body.get("up_to_turn").and_then(|v| v.as_u64());
+    let note = body
+        .get("note")
+        .and_then(|v| v.as_str())
+        .map(std::borrow::ToOwned::to_owned);
+    let engine = state.engine();
+    let mut store = state.store.write().await;
+    let forked = engine.fork_thread(&mut store, &source, up_to_turn, note)?;
+    tracing::info!(
+        fork = %forked.fork,
+        copied = forked.copied_events,
+        "thread forked"
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "fork": forked.fork.to_string(),
+            "source": forked.source.to_string(),
+            "up_to_turn": forked.up_to_turn,
+            "copied_events": forked.copied_events,
+        })),
+    ))
 }
 
 // --- C4 projection (slice 3, IMPLEMENT-NOW item 12) ------------------------

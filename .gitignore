@@ -10,6 +10,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Tauri desktop shell (generated schemas/bundles)
+apps/desktop/src-tauri/gen/
+
 # Editors / OS
 .idea/
 .vscode/

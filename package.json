@@ -11,7 +11,9 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "biome check apps packages",
-    "lint:fix": "biome check --write apps packages"
+    "lint:fix": "biome check --write apps packages",
+    "desktop:dev": "pnpm --filter desktop tauri dev",
+    "desktop:build": "source scripts/tauri-env.sh && pnpm --filter desktop tauri build"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12"

@@ -2,6 +2,10 @@ import type {
   AppendedEvent,
   C4View,
   DraftIntentInput,
+  ForkReply,
+  ForkThreadInput,
+  GraphAtRevision,
+  GraphDiff,
   GraphPatch,
   GraphState,
   Health,
@@ -56,6 +60,22 @@ export class VistalithClient {
 
   async graph(): Promise<GraphState> {
     return this.getJson<GraphState>("/graph");
+  }
+
+  /** Time travel (SPEC-011): the graph as of an earlier revision. */
+  async graphAt(revision: number): Promise<GraphAtRevision> {
+    return this.getJson<GraphAtRevision>(
+      `/graph?at_revision=${encodeURIComponent(String(revision))}`,
+    );
+  }
+
+  /**
+   * Structural diff between two revisions (SPEC-011). `to` defaults to the
+   * current revision on the server.
+   */
+  async diff(from: number, to?: number): Promise<GraphDiff> {
+    const query = to === undefined ? `?from=${from}` : `?from=${from}&to=${to}`;
+    return this.getJson<GraphDiff>(`/diff${query}`);
   }
 
   async subjects(): Promise<SubjectNode[]> {
@@ -122,6 +142,23 @@ export class VistalithClient {
       { content },
       { okStatus: 200, throwOnError: true },
     );
+  }
+
+  // --- Fork / diff / time travel (slice 5, SPEC-011) ---
+
+  /**
+   * Forks a thread at a turn boundary (default: latest turn). The fork is a
+   * new durable thread whose items keep `forked_of` bindings to their
+   * originals; promotion into SDDK stays an explicit act.
+   */
+  async forkThread(
+    id: string,
+    input: ForkThreadInput = {},
+  ): Promise<ForkReply> {
+    return this.postJson<ForkReply>(`/threads/${enc(id)}/fork`, input, {
+      okStatus: 201,
+      throwOnError: true,
+    });
   }
 
   // --- C4 projection (slice 3) ---

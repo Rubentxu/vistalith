@@ -1,0 +1,29 @@
+[package]
+name = "vistalith-desktop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT"
+authors = ["Rubentxu"]
+description = "Vistalith desktop shell (Tauri 2) over the local vistalithd"
+publish = false
+
+# Own workspace on purpose (see root Cargo.toml `exclude`): the desktop shell
+# ships its own dependency tree (Tauri/wry/GTK) that must never gate the
+# core workspace builds. System requirements live in scripts/tauri-env.sh.
+
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"

@@ -1,0 +1,6 @@
+# The SurrealDB spike needs a nightly compiler: the `diskann` dependency of
+# surrealdb 3.x fails with E0311 (rust-lang/rust#100013) on every stable we
+# tested (1.89/1.90/1.91), but compiles on nightly. The main workspace keeps
+# its own stable pin (rust-toolchain.toml at the repository root).
+[toolchain]
+channel = "nightly"

@@ -114,6 +114,14 @@ pub fn apply_event(
                 ]),
                 sequence,
             );
+            // SPEC-011: copied items keep a binding back to their original.
+            if let Some(original) = &appended.forked_of {
+                graph.update_subject(
+                    &appended.message,
+                    &thread_properties(&[("forked_of", serde_json::json!(original.to_string()))]),
+                    sequence,
+                );
+            }
             let fact = RelationFact {
                 relation: RelationRef::new(
                     appended.thread.clone(),
@@ -192,15 +200,20 @@ pub fn apply_event(
                 ));
             }
             // Typed tool items stay structured: args and output are durable.
+            let mut tool_properties = thread_properties(&[
+                ("tool", serde_json::json!(invoked.tool)),
+                ("args", invoked.args.clone()),
+                ("output", invoked.output.clone()),
+            ]);
+            if let Some(original) = &invoked.forked_of {
+                tool_properties
+                    .insert("forked_of".to_owned(), serde_json::json!(original.to_string()));
+            }
             graph.upsert_subject(
                 invoked.tool_call.clone(),
                 AuthorityClass::Derived,
                 event_provenance(event),
-                thread_properties(&[
-                    ("tool", serde_json::json!(invoked.tool)),
-                    ("args", invoked.args.clone()),
-                    ("output", invoked.output.clone()),
-                ]),
+                tool_properties,
                 sequence,
             );
             let fact = RelationFact {
@@ -214,6 +227,61 @@ pub fn apply_event(
                 provenance: event_provenance(event),
             };
             graph.declare_relation(fact, sequence);
+        }
+        EventPayload::ThreadForked(forked) => {
+            let source = graph
+                .subject(&forked.source)
+                .ok_or_else(|| ProjectionError::UnknownSubject(forked.source.to_string()))?;
+            if graph.node(&forked.fork).is_some() {
+                return Err(ProjectionError::DuplicateSubject(forked.fork.to_string()));
+            }
+            // The fork is a first-class durable thread; its title derives
+            // from the source so replay alone reconstructs the lens state.
+            let source_title = source
+                .properties
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("thread");
+            graph.upsert_subject(
+                forked.fork.clone(),
+                AuthorityClass::Authoritative,
+                event_provenance(event),
+                thread_properties(&[
+                    (
+                        "title",
+                        serde_json::json!(format!(
+                            "{source_title} (fork ≤ turn {})",
+                            forked.up_to_turn
+                        )),
+                    ),
+                    ("turns", serde_json::json!(forked.up_to_turn)),
+                    ("forked_from", serde_json::json!(forked.source.to_string())),
+                ]),
+                sequence,
+            );
+            if let Some(note) = &forked.note {
+                graph.update_subject(
+                    &forked.fork,
+                    &thread_properties(&[("note", serde_json::json!(note))]),
+                    sequence,
+                );
+            }
+            let fact = RelationFact {
+                relation: RelationRef::new(
+                    forked.fork.clone(),
+                    RelationKind::ForkedFrom,
+                    forked.source.clone(),
+                )
+                .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                authority: AuthorityClass::Authoritative,
+                provenance: event_provenance(event),
+            };
+            if !graph.declare_relation(fact, sequence) {
+                return Err(ProjectionError::DuplicateRelation(format!(
+                    "{} forked from {}",
+                    forked.fork, forked.source
+                )));
+            }
         }
         EventPayload::IntentDrafted(drafted) => {
             if graph.node(&drafted.target).is_none() {

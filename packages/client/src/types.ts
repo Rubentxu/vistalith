@@ -194,6 +194,8 @@ export interface ThreadSummary {
   title: string;
   turns: number;
   last_model?: string;
+  /** Source thread identity when this thread is a fork (SPEC-011). */
+  forked_from?: string | null;
 }
 
 export interface ThreadMessage {
@@ -201,6 +203,8 @@ export interface ThreadMessage {
   role: MessageRole;
   content: string;
   turn: number;
+  /** Original message identity when this item was copied by a fork. */
+  forked_of?: string | null;
 }
 
 export interface ThreadView {
@@ -214,6 +218,66 @@ export interface ThreadReply {
   turn: number;
   content: string;
   usage: ModelUsage;
+}
+
+// --- Fork / diff / time travel (SPEC-011) ------------------------------------
+
+export interface ForkThreadInput {
+  /** Last source turn carried into the fork; defaults to the latest turn. */
+  up_to_turn?: number;
+  note?: string;
+}
+
+export interface ForkReply {
+  fork: string;
+  source: string;
+  up_to_turn: number;
+  copied_events: number;
+}
+
+/** SubjectRefs serialize in the flat wire format. */
+export type SubjectRefWire = {
+  namespace: Namespace;
+  kind: string;
+  id: string;
+  revision?: number;
+};
+
+export interface PropertyChange {
+  key: string;
+  from?: unknown;
+  to?: unknown;
+}
+
+export interface SubjectChange {
+  subject: SubjectRefWire;
+  changes: PropertyChange[];
+}
+
+export interface GraphDiff {
+  added_subjects: SubjectRefWire[];
+  removed_subjects: SubjectRefWire[];
+  changed_subjects: SubjectChange[];
+  added_relations: {
+    from: SubjectRefWire;
+    kind: string;
+    to: SubjectRefWire;
+  }[];
+  removed_relations: {
+    from: SubjectRefWire;
+    kind: string;
+    to: SubjectRefWire;
+  }[];
+  changed_relations: {
+    relation: { from: SubjectRefWire; kind: string; to: SubjectRefWire };
+    from: unknown;
+    to: unknown;
+  }[];
+}
+
+/** GraphState plus the `as_of_revision` marker set by time-travel reads. */
+export interface GraphAtRevision extends GraphState {
+  as_of_revision?: number;
 }
 
 // --- Visual intents (SPEC-006) ----------------------------------------------

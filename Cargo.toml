@@ -8,7 +8,17 @@ members = [
 ]
 # dev/ holds the pinned SDDK checkout: it is its own cargo workspace and is
 # consumed as path dependencies, never as members of this workspace.
-exclude = ["dev"]
+# crates/vistalith-spike-surrealdb is the SurrealDB gate spike (SPK-003): it
+# pins its own nightly toolchain because surrealdb 3.x does not build on any
+# stable we use — a spike must never gate product builds (see
+# docs/SURREALDB-SPIKE.md).
+# apps/desktop/src-tauri is the Tauri 2 desktop shell: it ships its own
+# dependency tree (GTK/WebKit) and is built through the desktop pnpm scripts.
+exclude = [
+    "dev",
+    "crates/vistalith-spike-surrealdb",
+    "apps/desktop/src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -34,6 +44,10 @@ sddk-testkit = { path = "dev/sddk-framework/crates/sddk-testkit" }
 rig-core = "0.42"
 rmcp = "3.2"
 petgraph = "0.8"
+# SurrealDB is NOT a workspace dependency: the SPK-003 spike lives in the
+# self-contained crates/vistalith-spike-surrealdb (excluded above) because
+# surrealdb 3.x does not compile on the pinned stable toolchain. If the gate
+# ever opens, adoption lands here behind a storage boundary.
 
 # Shared infrastructure, pinned at bootstrap; exact versions in Cargo.lock.
 serde = { version = "1", features = ["derive"] }

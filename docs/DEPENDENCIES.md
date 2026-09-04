@@ -48,17 +48,30 @@ must use this pinned binary, never a `cargo install` of a moving revision.
 | `rig-core` | 0.42.0 (consumed by vistalith-agent-runtime, adapter only) | root `Cargo.toml` + `Cargo.lock` |
 | `rmcp` | 3.2.x | root `Cargo.toml [workspace.dependencies]` |
 | `petgraph` | 0.8.x | root `Cargo.toml [workspace.dependencies]` |
+| `surrealdb` | 3.1.6 — **spike only** (baseline names 3.2.x; it does not compile on any stable toolchain we use — see `docs/SURREALDB-SPIKE.md`) | `crates/vistalith-spike-surrealdb/Cargo.toml` + its own `Cargo.lock` |
+| `tauri` / `tauri-build` | 2.x (2.11.x line tested) — desktop shell only | `apps/desktop/src-tauri/Cargo.toml` + its own `Cargo.lock` |
+| `@tauri-apps/cli` | 2.11.4 | `apps/desktop/package.json` + `pnpm-lock.yaml` |
 | Tokio/Axum/Serde/Tracing | current stable | root `Cargo.toml [workspace.dependencies]` |
 | everything else | exact | `Cargo.lock` (committed) |
+
+Both the SurrealDB spike and the desktop shell are **excluded from the main
+cargo workspace** on purpose: each has its own `Cargo.lock` (committed) and,
+for the spike, its own toolchain pin (nightly, via its `rust-toolchain.toml`)
+— an experimental or OS-coupled dependency tree must never gate core builds.
 
 ## TypeScript stack
 
 Node ≥24 LTS, pnpm 12 (via `packageManager` in the root `package.json`),
 TypeScript 7.0.2, React 19.2.8, Vite 8.2.2, TanStack Query 5, Zustand 5,
-Vitest 5, Testing Library, Biome 2.5. Exact pins live in the package.json
-files (`.npmrc` sets `save-exact=true`) and `pnpm-lock.yaml` (committed).
-Playwright stays unpinned until the first e2e slice.
+Vitest 5, Testing Library, Biome 2.5, Tauri CLI 2.11. Exact pins live in the
+package.json files (`.npmrc` sets `save-exact=true`) and `pnpm-lock.yaml`
+(committed). Playwright stays unpinned until the first e2e slice.
 
 ## Toolchain
 
 Rust 1.91.0 via `rust-toolchain.toml` (matches SDDK's `rust-toolchain.toml`).
+Exception: `crates/vistalith-spike-surrealdb` pins nightly through its own
+`rust-toolchain.toml` (see `docs/SURREALDB-SPIKE.md` for the upstream reason).
+Building the desktop shell needs the WebKit/GTK devel headers
+(`scripts/tauri-env.sh` documents the system package and the rootless
+fallback).

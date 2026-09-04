@@ -313,4 +313,63 @@ describe("visual intents (slice 4, SPEC-006)", () => {
       expect(outcome.current_revision).toBe(7);
     }
   });
+
+  // --- Fork / diff / time travel (slice 5, SPEC-011) ---
+
+  it("forks a thread at a turn boundary", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(201, {
+        fork: "agentic:thread:fork-1",
+        source: "agentic:thread:src-1",
+        up_to_turn: 2,
+        copied_events: 5,
+      }),
+    );
+    const fork = await client.forkThread("src-1", {
+      up_to_turn: 2,
+      note: "explore",
+    });
+    expect(fork.fork).toBe("agentic:thread:fork-1");
+    expect(fork.copied_events).toBe(5);
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:7420/threads/src-1/fork");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      up_to_turn: 2,
+      note: "explore",
+    });
+  });
+
+  it("reads the graph at an earlier revision", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(200, { revision: 3, as_of_revision: 3, subjects: [] }),
+    );
+    const past = await client.graphAt(3);
+    expect(past.as_of_revision).toBe(3);
+    const [url] = fetchImpl.mock.calls[0] as [string];
+    expect(url).toBe("http://127.0.0.1:7420/graph?at_revision=3");
+  });
+
+  it("fetches the structural diff between revisions", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(200, {
+        added_subjects: [
+          { namespace: "agentic", kind: "thread", id: "fork-1" },
+        ],
+        removed_subjects: [],
+        changed_subjects: [],
+        added_relations: [],
+        removed_relations: [],
+        changed_relations: [],
+      }),
+    );
+    const diff = await client.diff(3, 7);
+    expect(diff.added_subjects).toHaveLength(1);
+    const [url] = fetchImpl.mock.calls[0] as [string];
+    expect(url).toBe("http://127.0.0.1:7420/diff?from=3&to=7");
+
+    await client.diff(3);
+    const [defaulted] = fetchImpl.mock.calls[1] as [string];
+    expect(defaulted).toBe("http://127.0.0.1:7420/diff?from=3");
+  });
 });

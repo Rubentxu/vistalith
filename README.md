@@ -23,7 +23,7 @@ built and changed. The full planning baseline lives in
 | 2 | `@vistalith/client` + web graph lens with cross-lens `SubjectRef` selection | done |
 | 3 | Conversation threads, one provider through Rig, C4 projection | done |
 | 4 | Native tool (`graph_search`) + VisualIntent draft/preview/promote lifecycle | done |
-| 5 | SurrealDB spike (gated), fork/diff, Tauri desktop | pending |
+| 5 | SurrealDB spike (gated — **gate closed**, `docs/SURREALDB-SPIKE.md`), thread fork + graph diff/time travel (SPEC-011), Tauri desktop shell | done |
 
 ## Normative baseline decisions
 
@@ -69,21 +69,29 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    against stored revisions.
 5. Every graph fact carries source, source revision, authority class and
    provenance; advisory facts are distinguishable.
+6. Forks (SPEC-011) are advisory exploration state: a forked thread copies
+   its items with `forked_of` bindings back to the originals and a
+   `forked_from` relation to its source; time travel (`graph?at_revision=R`)
+   is a strict replay of the log prefix, and structural diffs are
+   deterministic. Promotion into SDDK stays explicit and governed.
 
 ## Repository layout
 
 ```text
 crates/
 ├── vistalith-domain         # SubjectRef, VEvent, patch types, authority classes
-├── vistalith-graph          # in-memory SWG, event projection, patches, C4 view, replay
+├── vistalith-graph          # in-memory SWG, event projection, patches, C4 view, replay, diff
 ├── vistalith-agent-runtime  # conversation engine + provider contracts (Rig behind them)
-└── vistalith-server         # `vistalithd` — axum server over the event log + SWG
+├── vistalith-server         # `vistalithd` — axum server over the event log + SWG
+└── vistalith-spike-surrealdb  # SPK-003 storage gate spike (own toolchain; excluded)
 packages/
 └── client             # @vistalith/client — TS protocol mirror + typed HTTP client
 apps/
-└── web                # React/Vite graph lens (subjects/edges, SubjectRef selection)
+├── web                # React/Vite graph lens (subjects/edges, SubjectRef selection)
+└── desktop            # Tauri 2 shell wrapping the web lens + vistalithd lifecycle
 dev/                   # pinned SDDK checkout + pinned sddk CLI binary (gitignored)
 docs/DEPENDENCIES.md   # dependency pins and pin policy
+docs/SURREALDB-SPIKE.md  # SPK-003 gate report and verdict
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
 ```
 
@@ -109,28 +117,54 @@ vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
 ## Building and running
 
 ```bash
-# Rust core + server (24 tests)
+# Rust core + server
 cargo test
 cargo run -p vistalith-server --bin vistalithd \
   --fixture crates/vistalith-graph/tests/fixtures/sample-world.json --port 7420
 
-# TypeScript workspace (24 tests)
+# TypeScript workspace
 pnpm install
 pnpm build && pnpm test && pnpm lint
 pnpm dev:web        # http://localhost:5173 → talks to vistalithd on :7420
+
+# Desktop shell (Tauri 2; wraps the same web lens, can launch vistalithd)
+pnpm install
+pnpm desktop:dev    # WebKit/GTK devel headers required — see scripts/tauri-env.sh
+
+# SurrealDB storage spike (SPK-003; isolated: nightly toolchain, own lockfile)
+cd crates/vistalith-spike-surrealdb
+cargo test --features file-engine
+cargo run --release --features file-engine -- --engine surrealkv --nodes 50000
 ```
 
-`vistalithd` API: `GET /health`, `GET /graph`, `GET /subjects`,
-`GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`, `POST /patches`
-(applied → `200`, rejected → `409`; rejections are durable events),
-`POST|GET /threads`, `GET /threads/{id}`, `POST /threads/{id}/messages`
-(one provider turn per message), `POST|GET /intents`,
-`GET /intents/{id}`, `POST /intents/{id}/promote`,
+`vistalithd` API: `GET /health`, `GET /graph` (optional `?at_revision=R`
+time travel), `GET /diff?from=A[&to=B]` (structural graph diff),
+`GET /subjects`, `GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`,
+`POST /patches` (applied → `200`, rejected → `409`; rejections are durable
+events), `POST|GET /threads`, `GET /threads/{id}`,
+`POST /threads/{id}/messages` (one provider turn per message),
+`POST /threads/{id}/fork` (SPEC-011: copy items up to a turn with
+`forked_of` bindings, link the fork back with `forked_from`),
+`POST|GET /intents`, `GET /intents/{id}`, `POST /intents/{id}/promote`,
 `POST /intents/{id}/discard` (SPEC-006 lifecycle) and `GET /views/c4`.
 
 The web client has three lenses over the same identities: **Graph**
-(subjects/edges), **C4** (projected view) and **Chat** (threads). Selecting a
-subject in any lens propagates the same `SubjectRef`.
+(subjects/edges, with a time-travel selector and structural diff when
+viewing a past revision), **C4** (projected view) and **Chat** (threads,
+with a per-thread fork action; copied items are marked `⎇ forked`).
+Selecting a subject in any lens propagates the same `SubjectRef`.
+
+## Storage decision (SPK-003)
+
+The SurrealDB spike ran the full gate from `technology/GRAPH-STORAGE-DECISION.md`
+and **the gate stays closed**: surrealdb 3.x (both the baseline's 3.2.x line
+and 3.1.6) does not compile with any stable Rust toolchain this project uses
+(its exact-pinned `diskann` dependency trips rust-lang/rust#100013); on
+nightly the engine measured well (deterministic rebuild, 3-hop traversal
+p95 0.35 ms at 1M relations, durable reopen, digest parity with the SWG
+projection) but adopting it would fork the toolchain. Storage remains
+**Candidate B**: durable JSON event log + strict in-memory projection.
+Full evidence and reproduction: [`docs/SURREALDB-SPIKE.md`](docs/SURREALDB-SPIKE.md).
 
 Providers: `--provider fake` (offline, default) or `--provider anthropic
 --model claude-haiku-4-5` with `VISTALITH_ANTHROPIC_API_KEY` (read once,

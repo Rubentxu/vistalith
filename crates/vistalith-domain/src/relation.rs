@@ -52,6 +52,8 @@ pub enum RelationKind {
     ObservedIn,
     UsedModel,
     UsedTool,
+    /// An exploration fork derived from this thread/graph state (SPEC-011).
+    ForkedFrom,
     /// A relation kind outside the shipped vocabulary (snake_case).
     Other(String),
 }
@@ -127,6 +129,7 @@ relation_kind_impl! {
     ObservedIn => "observed_in",
     UsedModel => "used_model",
     UsedTool => "used_tool",
+    ForkedFrom => "forked_from",
 }
 
 /// Directed typed relation between two subjects.

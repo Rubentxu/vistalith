@@ -1,0 +1,44 @@
+[package]
+name = "vistalith-spike-surrealdb"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT"
+authors = ["Rubentxu"]
+publish = false
+
+# Standalone on purpose. SurrealDB 3.x stable does not compile with the
+# project's pinned stable toolchain (rustc 1.91): its exact-pinned diskann
+# dependency trips rust-lang/rust#100013 (E0311) on every stable we tested
+# (1.89, 1.90, 1.91). It does compile on nightly, so this crate pins its own
+# toolchain via ./rust-toolchain.toml and is excluded from the main cargo
+# workspace (root Cargo.toml `exclude`) — a spike must never gate product
+# builds. Run it from inside this directory.
+
+[workspace]
+
+[dependencies]
+# Newest stable line that is buildable at all; the baseline's 3.2.x pin
+# (3.2.4, diskann 0.54) fails identically. Recorded in the gate report.
+surrealdb = { version = "=3.1.6", default-features = false, features = ["kv-mem"] }
+vistalith-domain = { path = "../vistalith-domain" }
+vistalith-graph = { path = "../vistalith-graph" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "parsing", "serde", "serde-well-known", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+[features]
+default = []
+# Durable file engine (SurrealKV, pure Rust) used by the durability and
+# footprint gate steps (`surrealdb-spike --engine surrealkv`) and by the
+# file-backed integration test. Off by default so the plain test run keeps
+# building against the in-memory engine only.
+file-engine = ["surrealdb/kv-surrealkv"]
+
+[[bin]]
+name = "surrealdb-spike"
+path = "src/main.rs"
