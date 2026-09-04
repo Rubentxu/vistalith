@@ -137,6 +137,10 @@ pub struct ToolInvoked {
     pub tool_call: SubjectRef,
     /// Tool descriptor id, e.g. `graph_search`.
     pub tool: String,
+    /// Tool source, e.g. `native` or `mcp:echo` (TOOLS-PERMISSIONS:
+    /// descriptors carry their origin). Absent on older logs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     pub args: serde_json::Value,
     pub output: serde_json::Value,
     /// Original tool-call subject this item was copied from in a thread

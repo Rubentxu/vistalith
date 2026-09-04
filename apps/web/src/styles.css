@@ -796,3 +796,66 @@ code {
   opacity: 0.8;
   word-break: break-all;
 }
+
+/* --- Unified tool catalog + MCP (slice 6) --- */
+
+.chat-tools-host {
+  max-width: 26rem;
+  overflow-y: auto;
+}
+
+.tools-panel {
+  padding: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.tools-panel h3 {
+  margin: 0 0 0.5rem;
+}
+
+.tools-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.tools-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.tools-id {
+  font-size: 0.8rem;
+}
+
+.tools-source {
+  opacity: 0.7;
+  font-size: 0.75rem;
+}
+
+.tools-description {
+  margin: 0.15rem 0;
+  opacity: 0.8;
+}
+
+.tools-grant,
+.tools-revoke {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+}
+
+.tools-perm-allow {
+  border-color: var(--ok, #3a7);
+}
+
+.tools-perm-ask {
+  border-color: var(--warn, #d90);
+}
+
+.tools-perm-deny {
+  border-color: var(--bad, #c44);
+}

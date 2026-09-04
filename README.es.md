@@ -25,6 +25,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 3 | Hilos de conversación, un proveedor vía Rig, proyección C4 | hecho |
 | 4 | Herramienta nativa (`graph_search`) + ciclo de vida de VisualIntent (draft/preview/promoción) | hecho |
 | 5 | Spike de SurrealDB (con puerta — **puerta cerrada**, `docs/SURREALDB-SPIKE.md`), fork de hilos + diff/Time Travel del grafo (SPEC-011), shell de escritorio Tauri | hecho |
+| 6 | Cliente MCP (rmcp, stdio + Streamable HTTP), catálogo unificado de tools con grants de permisos con scope (SPEC-009, TOOLS-PERMISSIONS) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -78,6 +79,13 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    (`graph?at_revision=R`) es un replay estricto del prefijo del log, y los
    diffs estructurales son deterministas. La promoción a SDDK sigue siendo
    explícita y gobernada.
+7. Las tools (nativas y MCP) proyectan en un único catálogo (SPEC-009). Los
+   resultados de permiso son deny / allow / ask: las tools read-only
+   ejecutan libres, las de clase write necesitan un grant temporal con scope
+   (por llamada, consumible, revocable), y los denies explícitos siempre
+   ganan. Toda llamada — concedida o rechazada — es un evento durable
+   `ToolInvoked` que lleva la fuente de la tool. Los permisos de Vistalith
+   restringen; nunca debilitan la policy de SDDK.
 
 ## Estructura del repositorio
 
@@ -85,7 +93,7 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
 crates/
 ├── vistalith-domain         # SubjectRef, VEvent, tipos de patch, clases de autoridad
 ├── vistalith-graph          # SWG en memoria, proyección de eventos, patches, vista C4, replay, diff
-├── vistalith-agent-runtime  # motor de conversación + contratos de proveedor (Rig detrás)
+├── vistalith-agent-runtime  # motor de conversación, contratos de proveedor, cliente MCP, tools unificadas
 ├── vistalith-server         # `vistalithd` — servidor axum sobre el log de eventos + SWG
 └── vistalith-spike-surrealdb  # spike SPK-003 de la puerta de almacenamiento (toolchain propia; excluido)
 packages/
@@ -151,13 +159,30 @@ los rechazos son eventos durables), `POST|GET /threads`, `GET /threads/{id}`,
 `POST /threads/{id}/fork` (SPEC-011: copia items hasta un turno con bindings
 `forked_of` y enlaza el fork con `forked_from`),
 `POST|GET /intents`, `GET /intents/{id}`, `POST /intents/{id}/promote`,
-`POST /intents/{id}/discard` (ciclo de vida SPEC-006) y `GET /views/c4`.
+`POST /intents/{id}/discard` (ciclo de vida SPEC-006), `GET /views/c4`,
+`GET /tools` (catálogo unificado: tools nativas + MCP con decisiones de
+permiso y estado de grants), `POST /tools/{id}/grant` /
+`POST /tools/{id}/revoke` (grants temporales con scope — las tools de clase
+write solo ejecutan mientras un grant tenga llamadas restantes), y
+`GET|POST /mcp/servers`, `DELETE /mcp/servers/{name}` (SPEC-009:
+conectar/desconectar servidores MCP por stdio o Streamable HTTP; las tools
+descubiertas entran al catálogo unificado con consecuencias clasificadas
+desde las anotaciones MCP — los servidores silenciosos obtienen el
+conservador `write`).
 
 El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
 (sujetos/aristas, con selector de time travel y diff estructural al ver una
 revisión pasada), **C4** (vista proyectada) y **Chat** (hilos, con acción de
-fork por hilo; los items copiados se marcan `⎇ forked`). Seleccionar un
-sujeto en cualquier lente propaga el mismo `SubjectRef`.
+fork por hilo; los items copiados se marcan `⎇ forked`, y el panel de tools
+muestra el catálogo unificado donde las tools ask se conceden o revocan).
+Seleccionar un sujeto en cualquier lente propaga el mismo `SubjectRef`.
+
+MCP: conecta un servidor de tools en runtime —
+`POST /mcp/servers {"name":"echo","command":"./target/debug/mcp-echo"}`
+(stdio) o `{"name":"docs","url":"http://localhost:8100/mcp"}` (Streamable
+HTTP). El binario fixture `mcp-echo` viene en el workspace para demos y
+tests. `--provider fake --fake-tool TOOL_ID --fake-args '{...}'` scripted un
+round de tool determinista para demos offline.
 
 ## Decisión de almacenamiento (SPK-003)
 

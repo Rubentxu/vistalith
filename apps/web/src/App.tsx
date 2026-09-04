@@ -8,6 +8,7 @@ import { IntentComposer } from "./components/IntentComposer.tsx";
 import { SubjectDetails } from "./components/SubjectDetails.tsx";
 import { SubjectList } from "./components/SubjectList.tsx";
 import { HistoryDiff, TimeTravelBar } from "./components/TimeTravel.tsx";
+import { ToolsPanel } from "./components/ToolsPanel.tsx";
 import { useGraph, useHealth } from "./hooks.ts";
 import { useSelection } from "./state/selection.ts";
 
@@ -154,6 +155,9 @@ export function App() {
               }}
             />
           </section>
+          <aside className="panel chat-tools-host">
+            <ToolsPanel client={client} />
+          </aside>
         </main>
       )}
     </div>

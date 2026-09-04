@@ -42,7 +42,16 @@ sddk-testkit = { path = "dev/sddk-framework/crates/sddk-testkit" }
 # Consumed by the agent-runtime slice; recorded here as the version line
 # agreed in the baseline. Verified when vistalith-agent-runtime lands.
 rig-core = "0.42"
-rmcp = "3.2"
+# rmcp: official Rust MCP SDK, direct (ADR-009). Client + both baseline
+# transports; `server` is on for the mcp-echo fixture used by tests.
+rmcp = { version = "=3.2.0", default-features = false, features = [
+    "client",
+    "server",
+    "macros",
+    "transport-io",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+] }
 petgraph = "0.8"
 # SurrealDB is NOT a workspace dependency: the SPK-003 spike lives in the
 # self-contained crates/vistalith-spike-surrealdb (excluded above) because

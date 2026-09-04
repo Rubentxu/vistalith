@@ -10,11 +10,14 @@ authors.workspace = true
 vistalith-domain = { workspace = true }
 vistalith-graph = { workspace = true }
 rig-core = { workspace = true }
+rmcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 uuid = { workspace = true }
+tokio = { workspace = true, features = ["process"] }
 
-[dev-dependencies]
-tokio = { workspace = true }
+[[bin]]
+name = "mcp-echo"
+path = "src/bin/mcp-echo.rs"

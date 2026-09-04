@@ -145,7 +145,7 @@ impl<P: ModelProvider> ConversationEngine<P> {
             if response.is_tool_call() && rounds < MAX_TOOL_ROUNDS {
                 rounds += 1;
                 let tool_results =
-                    self.run_tool_calls(store, thread, turn, &response.tool_calls)?;
+                    self.run_tool_calls(store, thread, turn, &response.tool_calls).await?;
                 // The tool outputs join the history as typed tool items; the
                 // model sees them on the next round.
                 let _ = tool_results;
@@ -251,6 +251,7 @@ impl<P: ModelProvider> ConversationEngine<P> {
                     plan.push(CopyItem::Tool {
                         original: invoked.tool_call.clone(),
                         tool: invoked.tool.clone(),
+                        source: invoked.source.clone(),
                         args: invoked.args.clone(),
                         output: invoked.output.clone(),
                     });
@@ -298,6 +299,7 @@ impl<P: ModelProvider> ConversationEngine<P> {
                 CopyItem::Tool {
                     original,
                     tool,
+                    source,
                     args,
                     output,
                 } => {
@@ -312,6 +314,7 @@ impl<P: ModelProvider> ConversationEngine<P> {
                             thread: fork.clone(),
                             tool_call,
                             tool,
+                            source,
                             args,
                             output,
                             forked_of: Some(original),
@@ -359,8 +362,8 @@ impl<P: ModelProvider> ConversationEngine<P> {
                     .descriptors()
                     .into_iter()
                     .map(|d| crate::provider::ToolContract {
-                        name: d.id.to_owned(),
-                        description: d.description.to_owned(),
+                        name: d.id.clone(),
+                        description: d.description.clone(),
                         parameters: d.parameters,
                     })
                     .collect()
@@ -370,7 +373,7 @@ impl<P: ModelProvider> ConversationEngine<P> {
 
     /// Executes tool calls requested by the model: permission check via the
     /// registry, run, and record one durable `ToolInvoked` item per call.
-    fn run_tool_calls(
+    async fn run_tool_calls(
         &self,
         store: &mut GraphStore,
         thread: &SubjectRef,
@@ -387,16 +390,24 @@ impl<P: ModelProvider> ConversationEngine<P> {
             .expect("generated tool call id is valid");
             let output = match self.tools.as_ref() {
                 Some(registry) => {
-                    let result = registry.invoke(store.graph(), &call.name, &call.arguments);
+                    let result = registry
+                        .invoke(store.graph(), &call.name, &call.arguments)
+                        .await;
                     result.unwrap_or_else(|err| serde_json::json!({ "error": err.to_string() }))
                 }
                 None => serde_json::json!({ "error": "no tools registered" }),
             };
+            let source = self
+                .tools
+                .as_ref()
+                .and_then(|registry| registry.get(&call.name))
+                .map(|entry| entry.descriptor.source.label());
             store.append(self.event(
                 EventPayload::ToolInvoked(ToolInvoked {
                     thread: thread.clone(),
                     tool_call: tool_call.clone(),
                     tool: call.name.clone(),
+                    source,
                     args: call.arguments.clone(),
                     output: output.clone(),
                     forked_of: None,
@@ -480,6 +491,7 @@ enum CopyItem {
     Tool {
         original: SubjectRef,
         tool: String,
+        source: Option<String>,
         args: serde_json::Value,
         output: serde_json::Value,
     },

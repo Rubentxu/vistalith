@@ -9,18 +9,27 @@
 //!   assistant reply and turn completion is a `VEvent` projected into the SWG.
 //! - Model calls are live non-deterministic behavior; the [`FakeProvider`]
 //!   gives recorded-external determinism for tests and offline demos.
+//! - Tools (native + MCP, SPEC-009 / `agentic/TOOLS-PERMISSIONS.md`) project
+//!   into one catalog behind a deny/allow/ask permission gate with scoped
+//!   temporary grants; rmcp is consumed directly (ADR-009).
 
 pub mod conversation;
 pub mod intents;
+pub mod mcp;
 pub mod provider;
 pub mod tools;
 
-pub use conversation::{ConversationEngine, ConversationError, ThreadReply};
+pub use conversation::{ConversationEngine, ConversationError, ForkedThread, ThreadReply};
 pub use intents::{IntentError, Promotion, discard_intent, draft_intent, promote_intent};
+pub use mcp::{
+    ConnectionStatus, McpConnection, McpError, McpManager, McpServerConfig, McpServerStatus,
+    catalog_id, consequence_from_annotations,
+};
 pub use provider::{
     ChatMessage, FakeProvider, FakeStep, ModelError, ModelProvider, ModelRequest, ModelResponse,
     RigProvider, RuntimeError, RuntimeProvider, ToolCallRequest, ToolContract,
 };
 pub use tools::{
-    Consequence, GraphSearchTool, NativeTool, Permission, ToolDescriptor, ToolError, ToolRegistry,
+    Consequence, Grant, GrantStore, GraphSearchTool, NativeTool, PermissionDecision, ToolDescriptor,
+    ToolEntry, ToolError, ToolRegistry, ToolSource,
 };

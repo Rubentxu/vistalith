@@ -10,11 +10,14 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use tokio::sync::RwLock;
+use std::sync::Arc as StdArc;
+
 use vistalith_agent_runtime::{
-    ConversationEngine, ConversationError, FakeProvider, ModelProvider, RuntimeProvider,
+    ConversationEngine, ConversationError, FakeProvider, GrantStore, McpManager,
+    McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
 };
 use vistalith_domain::{Namespace, SubjectKind, SubjectRef, VEvent};
 use vistalith_graph::{
@@ -28,6 +31,12 @@ use vistalith_graph::{
 pub struct AppState {
     store: Arc<RwLock<GraphStore>>,
     runtime: Arc<RuntimeProvider>,
+    /// Live MCP client connections (SPEC-009); tools project into the
+    /// unified catalog on every turn.
+    mcp: StdArc<McpManager>,
+    /// Scoped temporary grants, shared across requests and turns
+    /// (`agentic/TOOLS-PERMISSIONS.md`).
+    grants: StdArc<GrantStore>,
 }
 
 impl AppState {
@@ -49,15 +58,45 @@ impl AppState {
         AppState {
             store: Arc::new(RwLock::new(store)),
             runtime: Arc::new(runtime),
+            mcp: StdArc::new(McpManager::new()),
+            grants: StdArc::new(GrantStore::new()),
+        }
+    }
+
+    pub fn with_parts(
+        store: GraphStore,
+        runtime: RuntimeProvider,
+        mcp: StdArc<McpManager>,
+        grants: StdArc<GrantStore>,
+    ) -> Self {
+        AppState {
+            store: Arc::new(RwLock::new(store)),
+            runtime: Arc::new(runtime),
+            mcp,
+            grants,
         }
     }
 
     fn engine(&self) -> ConversationEngine<Arc<RuntimeProvider>> {
-        let mut engine = ConversationEngine::new(Arc::clone(&self.runtime));
+        // The unified catalog: native tools plus every connected MCP
+        // server's discovered tools (SPEC-009), one permission gate.
+        let mut registry = ToolRegistry::native(self.grants.clone());
+        for connection in self.mcp.connections() {
+            registry.add_mcp(connection);
+        }
+        let mut engine = ConversationEngine::new(Arc::clone(&self.runtime)).with_tools(registry);
         if let Ok(system) = std::env::var("VISTALITH_SYSTEM_PROMPT") {
             engine = engine.with_system_prompt(system);
         }
         engine
+    }
+
+    pub fn mcp_manager(&self) -> &StdArc<McpManager> {
+        &self.mcp
+    }
+
+    pub fn grant_store(&self) -> &StdArc<GrantStore> {
+        &self.grants
     }
 }
 
@@ -78,6 +117,11 @@ pub fn router(state: AppState) -> Router {
         .route("/graph", get(get_graph))
         .route("/diff", get(get_diff))
         .route("/threads/{id}/fork", post(post_thread_fork))
+        .route("/tools", get(get_tools))
+        .route("/tools/{id}/grant", post(post_tool_grant))
+        .route("/tools/{id}/revoke", post(post_tool_revoke))
+        .route("/mcp/servers", get(get_mcp_servers).post(post_mcp_server))
+        .route("/mcp/servers/{name}", delete(delete_mcp_server))
         .route("/subjects", get(get_subjects))
         .route("/subjects/{namespace}/{kind}/{id}", get(get_subject))
         .route("/events", get(get_events).post(post_event))
@@ -408,6 +452,138 @@ async fn post_thread_fork(
             "copied_events": forked.copied_events,
         })),
     ))
+}
+
+// --- Unified tool catalog + MCP (slice 6, SPEC-009) -------------------------
+
+/// One catalog row as seen over the API: descriptor + current permission
+/// decision + remaining scoped grant.
+fn tool_row(
+    grants: &GrantStore,
+    descriptor: &vistalith_agent_runtime::ToolDescriptor,
+) -> serde_json::Value {
+    let decision = match grants.is_denied(&descriptor.id) {
+        true => vistalith_agent_runtime::PermissionDecision::Deny,
+        false => match descriptor.consequence {
+            vistalith_agent_runtime::Consequence::ReadOnly => {
+                vistalith_agent_runtime::PermissionDecision::Allow
+            }
+            _ if grants.remaining(&descriptor.id) > 0 => {
+                vistalith_agent_runtime::PermissionDecision::Allow
+            }
+            _ => vistalith_agent_runtime::PermissionDecision::Ask,
+        },
+    };
+    serde_json::json!({
+        "id": descriptor.id,
+        "description": descriptor.description,
+        "consequence": descriptor.consequence,
+        "source": descriptor.source,
+        "parameters": descriptor.parameters,
+        "permission": decision,
+        "grant_remaining": grants.remaining(&descriptor.id),
+    })
+}
+
+/// Builds the unified catalog exactly as a turn would see it.
+fn unified_catalog(state: &AppState) -> ToolRegistry {
+    let mut registry = ToolRegistry::native(state.grants.clone());
+    for connection in state.mcp.connections() {
+        registry.add_mcp(connection);
+    }
+    registry
+}
+
+async fn get_tools(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let registry = unified_catalog(&state);
+    let rows: Vec<serde_json::Value> = registry
+        .descriptors()
+        .iter()
+        .map(|d| tool_row(&state.grants, d))
+        .collect();
+    Json(serde_json::json!({ "tools": rows, "grants": state.grants.all() }))
+}
+
+async fn post_tool_grant(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let calls = body.get("calls").and_then(|v| v.as_u64()).unwrap_or(1);
+    if calls == 0 || calls > 1000 {
+        return Err(ApiError::bad_request(
+            "`calls` must be between 1 and 1000".to_owned(),
+        ));
+    }
+    let known = unified_catalog(&state).get(&id).is_some();
+    if !known {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown tool `{id}`"),
+        });
+    }
+    if state.grants.is_denied(&id) {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            message: format!("tool `{id}` is denied by policy; grants are ignored"),
+        });
+    }
+    let grant = state.grants.grant(&id, calls as u32);
+    tracing::info!(tool = %id, calls, "scoped grant created");
+    Ok(Json(serde_json::json!({ "tool": grant.tool, "remaining": grant.remaining })))
+}
+
+async fn post_tool_revoke(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let removed = state.grants.revoke(&id);
+    Json(serde_json::json!({ "tool": id, "revoked": removed }))
+}
+
+async fn get_mcp_servers(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "servers": state.mcp.status() }))
+}
+
+async fn post_mcp_server(
+    State(state): State<AppState>,
+    Json(config): Json<McpServerConfig>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    if state.mcp.get(&config.name).is_some() {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            message: format!("MCP server `{}` is already registered", config.name),
+        });
+    }
+    config
+        .validate()
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let status = state
+        .mcp
+        .register(config)
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    tracing::info!(server = %status.name, tools = status.tools, "MCP server registered");
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(status).expect("status serialization"))))
+}
+
+async fn delete_mcp_server(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(connection) = state.mcp.take(&name) else {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown MCP server `{name}`"),
+        });
+    };
+    // Revoke that server's grants: the tools disappear from the catalog.
+    for descriptor in connection.entries().iter().map(|e| &e.descriptor) {
+        state.grants.revoke(&descriptor.id);
+        state.grants.set_denied(&descriptor.id, false);
+    }
+    connection.shutdown().await;
+    Ok(Json(serde_json::json!({ "removed": name })))
 }
 
 // --- C4 projection (slice 3, IMPLEMENT-NOW item 12) ------------------------

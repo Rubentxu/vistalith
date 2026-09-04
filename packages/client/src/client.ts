@@ -11,6 +11,8 @@ import type {
   Health,
   IntentDetail,
   IntentSummary,
+  McpServerConfig,
+  McpServerInfo,
   PatchOutcome,
   PromotionOutcome,
   StoredEvent,
@@ -19,6 +21,7 @@ import type {
   ThreadReply,
   ThreadSummary,
   ThreadView,
+  ToolsCatalog,
   VEvent,
 } from "./types.js";
 import { subjectRefToString } from "./types.js";
@@ -161,6 +164,55 @@ export class VistalithClient {
     });
   }
 
+  // --- Unified tool catalog + MCP (slice 6, SPEC-009) ---
+
+  /** The unified catalog: native + MCP tools with permission decisions. */
+  async tools(): Promise<ToolsCatalog> {
+    return this.getJson<ToolsCatalog>("/tools");
+  }
+
+  /**
+   * Grants `calls` more authorized invocations for a tool (scoped temporary
+   * grant, `agentic/TOOLS-PERMISSIONS.md`).
+   */
+  async grantTool(
+    id: string,
+    calls = 1,
+  ): Promise<{ tool: string; remaining: number }> {
+    return this.postJson<{ tool: string; remaining: number }>(
+      `/tools/${enc(id)}/grant`,
+      { calls },
+      { okStatus: 200, throwOnError: true },
+    );
+  }
+
+  async revokeTool(id: string): Promise<{ tool: string; revoked: boolean }> {
+    return this.postJson<{ tool: string; revoked: boolean }>(
+      `/tools/${enc(id)}/revoke`,
+      {},
+      { okStatus: 200, throwOnError: true },
+    );
+  }
+
+  async mcpServers(): Promise<McpServerInfo[]> {
+    const body = await this.getJson<{ servers: McpServerInfo[] }>(
+      "/mcp/servers",
+    );
+    return body.servers;
+  }
+
+  /** Connects an MCP server (stdio or Streamable HTTP) and discovers tools. */
+  async addMcpServer(config: McpServerConfig): Promise<McpServerInfo> {
+    return this.postJson<McpServerInfo>("/mcp/servers", config, {
+      okStatus: 201,
+      throwOnError: true,
+    });
+  }
+
+  async removeMcpServer(name: string): Promise<{ removed: string }> {
+    return this.deleteJson<{ removed: string }>(`/mcp/servers/${enc(name)}`);
+  }
+
   // --- C4 projection (slice 3) ---
 
   async c4View(): Promise<C4View> {
@@ -233,6 +285,13 @@ export class VistalithClient {
       body: JSON.stringify(body),
     });
     return this.parse<T>(response, options);
+  }
+
+  private async deleteJson<T>(path: string): Promise<T> {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method: "DELETE",
+    });
+    return this.parse<T>(response, { okStatus: 200, throwOnError: true });
   }
 
   private async parse<T>(

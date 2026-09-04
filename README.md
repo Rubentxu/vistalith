@@ -24,6 +24,7 @@ built and changed. The full planning baseline lives in
 | 3 | Conversation threads, one provider through Rig, C4 projection | done |
 | 4 | Native tool (`graph_search`) + VisualIntent draft/preview/promote lifecycle | done |
 | 5 | SurrealDB spike (gated — **gate closed**, `docs/SURREALDB-SPIKE.md`), thread fork + graph diff/time travel (SPEC-011), Tauri desktop shell | done |
+| 6 | MCP client (rmcp, stdio + Streamable HTTP), unified tool catalog with scoped permission grants (SPEC-009, TOOLS-PERMISSIONS) | done |
 
 ## Normative baseline decisions
 
@@ -74,6 +75,12 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    `forked_from` relation to its source; time travel (`graph?at_revision=R`)
    is a strict replay of the log prefix, and structural diffs are
    deterministic. Promotion into SDDK stays explicit and governed.
+7. Tools (native and MCP) project into one catalog (SPEC-009). Permission
+   outcomes are deny / allow / ask: read-only tools run free, write-class
+   tools need a scoped temporary grant (per-call, consumable, revocable),
+   explicit denies always win. Every call — granted or refused — is a
+   durable `ToolInvoked` event carrying the tool's source. Vistalith
+   permissions restrict; they never weaken SDDK policy.
 
 ## Repository layout
 
@@ -81,7 +88,7 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
 crates/
 ├── vistalith-domain         # SubjectRef, VEvent, patch types, authority classes
 ├── vistalith-graph          # in-memory SWG, event projection, patches, C4 view, replay, diff
-├── vistalith-agent-runtime  # conversation engine + provider contracts (Rig behind them)
+├── vistalith-agent-runtime  # conversation engine, provider contracts, MCP client, unified tools
 ├── vistalith-server         # `vistalithd` — axum server over the event log + SWG
 └── vistalith-spike-surrealdb  # SPK-003 storage gate spike (own toolchain; excluded)
 packages/
@@ -146,13 +153,30 @@ events), `POST|GET /threads`, `GET /threads/{id}`,
 `POST /threads/{id}/fork` (SPEC-011: copy items up to a turn with
 `forked_of` bindings, link the fork back with `forked_from`),
 `POST|GET /intents`, `GET /intents/{id}`, `POST /intents/{id}/promote`,
-`POST /intents/{id}/discard` (SPEC-006 lifecycle) and `GET /views/c4`.
+`POST /intents/{id}/discard` (SPEC-006 lifecycle), `GET /views/c4`,
+`GET /tools` (unified catalog: native + MCP tools with permission decisions
+and grant state), `POST /tools/{id}/grant` / `POST /tools/{id}/revoke`
+(scoped temporary grants — write-class tools run only while a grant has
+remaining calls), and `GET|POST /mcp/servers`,
+`DELETE /mcp/servers/{name}` (SPEC-009: connect/disconnect MCP servers over
+stdio or Streamable HTTP; discovered tools join the unified catalog with
+consequences classified from MCP annotations — silent servers get the
+conservative `write`).
 
 The web client has three lenses over the same identities: **Graph**
 (subjects/edges, with a time-travel selector and structural diff when
 viewing a past revision), **C4** (projected view) and **Chat** (threads,
-with a per-thread fork action; copied items are marked `⎇ forked`).
+with a per-thread fork action; copied items are marked `⎇ forked`, and the
+tools panel lists the unified catalog where ask-class tools can be granted
+or revoked).
 Selecting a subject in any lens propagates the same `SubjectRef`.
+
+MCP: connect a tool server at runtime —
+`POST /mcp/servers {"name":"echo","command":"./target/debug/mcp-echo"}`
+(stdio) or `{"name":"docs","url":"http://localhost:8100/mcp"}` (Streamable
+HTTP). The `mcp-echo` fixture binary ships in the workspace for demos and
+tests. `--provider fake --fake-tool TOOL_ID --fake-args '{...}'` scripts a
+deterministic tool round for offline demos.
 
 ## Storage decision (SPK-003)
 

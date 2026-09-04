@@ -376,3 +376,49 @@ export function parseSubjectRef(raw: string): SubjectRef {
 export function isSameSubject(a: SubjectRef, b: SubjectRef): boolean {
   return a.namespace === b.namespace && a.kind === b.kind && a.id === b.id;
 }
+
+// --- Unified tool catalog + MCP (SPEC-009) ------------------------------------
+
+export type ToolConsequence = "readonly" | "write" | "destructive";
+export type PermissionDecision = "allow" | "ask" | "deny";
+
+export type ToolSourceWire =
+  | { kind: "native" }
+  | { kind: "mcp"; server: string };
+
+export interface ToolInfo {
+  id: string;
+  description: string;
+  consequence: ToolConsequence;
+  source: ToolSourceWire;
+  parameters: unknown;
+  permission: PermissionDecision;
+  grant_remaining: number;
+}
+
+export interface GrantInfo {
+  tool: string;
+  remaining: number;
+}
+
+export interface ToolsCatalog {
+  tools: ToolInfo[];
+  grants: GrantInfo[];
+}
+
+export type McpServerConfig = {
+  /** Local, unique server name; tool ids are namespaced under it. */
+  name: string;
+  /** stdio transport: executable to spawn. */
+  command?: string;
+  args?: string[];
+  /** Streamable HTTP transport: base URL of the MCP endpoint. */
+  url?: string;
+};
+
+export interface McpServerInfo {
+  name: string;
+  transport: "stdio" | "http";
+  status: "connected" | "unhealthy";
+  tools: number;
+}

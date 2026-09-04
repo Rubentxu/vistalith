@@ -205,6 +205,9 @@ pub fn apply_event(
                 ("args", invoked.args.clone()),
                 ("output", invoked.output.clone()),
             ]);
+            if let Some(source) = &invoked.source {
+                tool_properties.insert("source".to_owned(), serde_json::json!(source));
+            }
             if let Some(original) = &invoked.forked_of {
                 tool_properties
                     .insert("forked_of".to_owned(), serde_json::json!(original.to_string()));

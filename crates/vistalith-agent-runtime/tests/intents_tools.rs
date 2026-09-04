@@ -1,6 +1,7 @@
 use vistalith_agent_runtime::{
     ChatMessage, ConversationEngine, FakeProvider, FakeStep, GraphSearchTool, IntentError,
-    ModelRequest, NativeTool, Permission, Promotion, RuntimeProvider, ToolRegistry,
+    GrantStore, ModelRequest, NativeTool, PermissionDecision, Promotion, RuntimeProvider,
+    ToolRegistry,
     discard_intent, draft_intent, promote_intent,
 };
 use vistalith_domain::{MessageRole, Namespace, SubjectKind, SubjectRef};
@@ -22,7 +23,7 @@ async fn native_tool_round_trip_is_fully_durable() {
     let mut store =
         GraphStore::from_fixture_path("../vistalith-graph/tests/fixtures/sample-world.json")
             .unwrap();
-    let engine = engine_with(ToolRegistry::graph_search());
+    let engine = engine_with(ToolRegistry::native(std::sync::Arc::new(GrantStore::new())));
 
     let thread = engine.start_thread(&mut store, "tooling").unwrap();
     let reply = engine
@@ -123,10 +124,10 @@ async fn graph_search_respects_filters() {
 
 #[test]
 fn write_tools_are_denied_by_the_registry() {
-    let registry = ToolRegistry::graph_search();
+    let registry = ToolRegistry::native(std::sync::Arc::new(GrantStore::new()));
     assert_eq!(
         registry.permission("graph_search").unwrap(),
-        Permission::Allow
+        PermissionDecision::Allow
     );
     assert!(matches!(
         registry.permission("file_delete"),

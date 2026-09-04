@@ -373,3 +373,123 @@ describe("visual intents (slice 4, SPEC-006)", () => {
     expect(defaulted).toBe("http://127.0.0.1:7420/diff?from=3");
   });
 });
+
+describe("unified tool catalog + MCP (slice 6, SPEC-009)", () => {
+  let fetchImpl: ReturnType<typeof vi.fn>;
+  let client: VistalithClient;
+
+  beforeEach(() => {
+    fetchImpl = vi.fn();
+    client = new VistalithClient({
+      baseUrl: "http://127.0.0.1:7420/",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+  });
+
+  it("fetches the unified tool catalog", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse(200, {
+        tools: [
+          {
+            id: "graph_search",
+            description: "search",
+            consequence: "readonly",
+            source: { kind: "native" },
+            parameters: { type: "object" },
+            permission: "allow",
+            grant_remaining: 0,
+          },
+          {
+            id: "mcp_echo_echo",
+            description: "echo",
+            consequence: "readonly",
+            source: { kind: "mcp", server: "echo" },
+            parameters: { type: "object" },
+            permission: "allow",
+            grant_remaining: 0,
+          },
+        ],
+        grants: [],
+      }),
+    );
+    const catalog = await client.tools();
+    expect(catalog.tools).toHaveLength(2);
+    expect(catalog.tools[1].source).toEqual({ kind: "mcp", server: "echo" });
+    const [url] = fetchImpl.mock.calls[0] as [string];
+    expect(url).toBe("http://127.0.0.1:7420/tools");
+  });
+
+  it("grants and revokes scoped tool permissions", async () => {
+    fetchImpl.mockResolvedValueOnce(
+      jsonResponse(200, { tool: "mcp_echo_append_note", remaining: 1 }),
+    );
+    fetchImpl.mockResolvedValueOnce(
+      jsonResponse(200, { tool: "mcp_echo_append_note", revoked: true }),
+    );
+    const granted = await client.grantTool("mcp_echo_append_note", 1);
+    expect(granted.remaining).toBe(1);
+    const [grantUrl, grantInit] = fetchImpl.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(grantUrl).toBe(
+      "http://127.0.0.1:7420/tools/mcp_echo_append_note/grant",
+    );
+    expect(JSON.parse(String(grantInit.body))).toEqual({ calls: 1 });
+
+    const revoked = await client.revokeTool("mcp_echo_append_note");
+    expect(revoked.revoked).toBe(true);
+    const [revokeUrl, revokeInit] = fetchImpl.mock.calls[1] as [
+      string,
+      RequestInit,
+    ];
+    expect(revokeUrl).toBe(
+      "http://127.0.0.1:7420/tools/mcp_echo_append_note/revoke",
+    );
+    expect(revokeInit.method).toBe("POST");
+  });
+
+  it("manages MCP servers over the API", async () => {
+    fetchImpl.mockResolvedValueOnce(
+      jsonResponse(201, {
+        name: "echo",
+        transport: "stdio",
+        status: "connected",
+        tools: 2,
+      }),
+    );
+    fetchImpl.mockResolvedValueOnce(
+      jsonResponse(200, {
+        servers: [
+          { name: "echo", transport: "stdio", status: "connected", tools: 2 },
+        ],
+      }),
+    );
+    fetchImpl.mockResolvedValueOnce(jsonResponse(200, { removed: "echo" }));
+
+    const added = await client.addMcpServer({
+      name: "echo",
+      command: "/usr/local/bin/mcp-echo",
+    });
+    expect(added.tools).toBe(2);
+    const [addUrl, addInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(addUrl).toBe("http://127.0.0.1:7420/mcp/servers");
+    expect(addInit.method).toBe("POST");
+    expect(JSON.parse(String(addInit.body))).toEqual({
+      name: "echo",
+      command: "/usr/local/bin/mcp-echo",
+    });
+
+    const servers = await client.mcpServers();
+    expect(servers).toHaveLength(1);
+
+    const removed = await client.removeMcpServer("echo");
+    expect(removed.removed).toBe("echo");
+    const [removeUrl, removeInit] = fetchImpl.mock.calls[2] as [
+      string,
+      RequestInit,
+    ];
+    expect(removeUrl).toBe("http://127.0.0.1:7420/mcp/servers/echo");
+    expect(removeInit.method).toBe("DELETE");
+  });
+});
