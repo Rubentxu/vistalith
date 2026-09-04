@@ -4,6 +4,7 @@ import { client } from "./api.ts";
 import { C4ViewPanel } from "./components/C4ViewPanel.tsx";
 import { ChatPanel } from "./components/ChatPanel.tsx";
 import { GraphView } from "./components/GraphView.tsx";
+import { ImpactPanel } from "./components/ImpactPanel.tsx";
 import { IntentComposer } from "./components/IntentComposer.tsx";
 import { SubjectDetails } from "./components/SubjectDetails.tsx";
 import { SubjectList } from "./components/SubjectList.tsx";
@@ -110,6 +111,7 @@ export function App() {
           </section>
           <aside className="panel">
             <SubjectDetails graph={shownGraph ?? graph} />
+            <ImpactPanel selected={selected} />
             {asOf !== null && diff.data ? (
               <HistoryDiff diff={diff.data} from={asOf} />
             ) : null}

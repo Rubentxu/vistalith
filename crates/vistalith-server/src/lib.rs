@@ -19,9 +19,10 @@ use vistalith_agent_runtime::{
     ConversationEngine, ConversationError, FakeProvider, GrantStore, McpManager,
     McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
 };
-use vistalith_domain::{Namespace, SubjectKind, SubjectRef, VEvent};
+use vistalith_domain::{Namespace, RelationKind, SubjectKind, SubjectRef, VEvent};
 use vistalith_graph::{
-    GraphDiff, GraphPatch, GraphStore, PatchOutcome, StoreError, c4_view, canonical_graph_json,
+    AlgorithmGraph, ContextRequest, GraphDiff, GraphPatch, GraphStore, PatchOutcome, StoreError,
+    append_and_react, c4_view, canonical_graph_json,
 };
 
 /// Shared state: the durable log + its projection, and the conversation
@@ -37,6 +38,9 @@ pub struct AppState {
     /// Scoped temporary grants, shared across requests and turns
     /// (`agentic/TOOLS-PERMISSIONS.md`).
     grants: StdArc<GrantStore>,
+    /// Reactive behaviors dispatched on live event appends (SPEC-003).
+    /// Shared, because the built-in set is process-wide.
+    behaviors: StdArc<Vec<Box<dyn vistalith_graph::Behavior>>>,
 }
 
 impl AppState {
@@ -60,6 +64,7 @@ impl AppState {
             runtime: Arc::new(runtime),
             mcp: StdArc::new(McpManager::new()),
             grants: StdArc::new(GrantStore::new()),
+            behaviors: StdArc::new(vistalith_graph::builtin_behaviors()),
         }
     }
 
@@ -74,6 +79,7 @@ impl AppState {
             runtime: Arc::new(runtime),
             mcp,
             grants,
+            behaviors: StdArc::new(vistalith_graph::builtin_behaviors()),
         }
     }
 
@@ -134,6 +140,10 @@ pub fn router(state: AppState) -> Router {
         .route("/intents/{id}/promote", post(promote_intent))
         .route("/intents/{id}/discard", post(discard_intent))
         .route("/views/c4", get(get_c4_view))
+        .route("/views/context", post(post_context_view))
+        .route("/algorithms/impact/{namespace}/{kind}/{id}", get(get_impact))
+        .route("/algorithms/path", get(get_path))
+        .route("/algorithms/cycles", get(get_cycles))
         .layer(cors)
         .with_state(state)
 }
@@ -286,14 +296,21 @@ async fn post_event(
     Json(event): Json<VEvent>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     let mut store = state.store.write().await;
-    let appended = store.append(event)?;
-    tracing::info!(sequence = appended.sequence, "event appended");
+    // SPEC-003: live appends dispatch the reactive behaviors; their
+    // advisories are appended with causation_id -> this event.
+    let outcome = {
+        let behaviors = state.behaviors.clone();
+        append_and_react(&mut store, event, &behaviors)?
+    };
+    let appended = outcome.appended;
+    tracing::info!(sequence = appended.sequence, advisories = outcome.advisories, "event appended");
     Ok((
         StatusCode::CREATED,
         Json(serde_json::json!({
             "event_id": appended.event_id,
             "sequence": appended.sequence,
             "revision": appended.revision,
+            "advisories_raised": outcome.advisories,
         })),
     ))
 }
@@ -584,6 +601,164 @@ async fn delete_mcp_server(
     }
     connection.shutdown().await;
     Ok(Json(serde_json::json!({ "removed": name })))
+}
+
+// --- Reactive behaviors / algorithms / context view (slice 7) ---------------
+
+async fn post_context_view(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Wire format: roots as `ns:kind:id` identity strings (the API-wide
+    // convention), relation kinds as their wire names.
+    let parse_root = |raw: &str| SubjectRef::parse(raw).map_err(|e| ApiError::bad_request(e.to_string()));
+    let roots_value = body
+        .get("roots")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| ApiError::bad_request("missing `roots` array".to_owned()))?;
+    let mut roots = Vec::new();
+    for root in roots_value {
+        let raw = root
+            .as_str()
+            .ok_or_else(|| ApiError::bad_request("`roots` entries must be identity strings".to_owned()))?;
+        roots.push(parse_root(raw)?);
+    }
+    if roots.is_empty() {
+        return Err(ApiError::bad_request(
+            "`roots` must contain at least one subject".to_owned(),
+        ));
+    }
+    let relations = match body.get("relations") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => {
+            let raw_list = value
+                .as_array()
+                .ok_or_else(|| ApiError::bad_request("`relations` must be an array".to_owned()))?;
+            let mut kinds = Vec::new();
+            for raw in raw_list {
+                let raw = raw
+                    .as_str()
+                    .ok_or_else(|| ApiError::bad_request("`relations` entries must be strings".to_owned()))?;
+                kinds.push(
+                    RelationKind::parse(raw).map_err(|e| ApiError::bad_request(e.to_string()))?,
+                );
+            }
+            Some(kinds)
+        }
+    };
+    let parse_flag = |key: &str| -> Result<bool, ApiError> {
+        match body.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(false),
+            Some(value) => value
+                .as_bool()
+                .ok_or_else(|| ApiError::bad_request(format!("`{key}` must be a boolean"))),
+        }
+    };
+    let max_depth = match body.get("max_depth") {
+        None | Some(serde_json::Value::Null) => 2,
+        Some(value) => value
+            .as_u64()
+            .and_then(|v| u8::try_from(v).ok())
+            .ok_or_else(|| ApiError::bad_request("`max_depth` must be 0..=255".to_owned()))?,
+    };
+    let token_budget = match body.get("token_budget") {
+        None | Some(serde_json::Value::Null) => 8_000,
+        Some(value) => value
+            .as_u64()
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or_else(|| ApiError::bad_request("`token_budget` must be a positive integer".to_owned()))?,
+    };
+    let request = ContextRequest {
+        roots,
+        relations,
+        max_depth,
+        include_derived: parse_flag("include_derived")?,
+        include_advisory: parse_flag("include_advisory")?,
+        recency_cutoff: None,
+        token_budget,
+    };
+    let store = state.store.read().await;
+    let view = vistalith_graph::build_context_view(&store, &request);
+    Ok(Json(serde_json::to_value(view).expect("view serialization")))
+}
+
+fn parse_kinds(raw: Option<String>) -> Result<Option<Vec<RelationKind>>, ApiError> {
+    match raw {
+        None => Ok(None),
+        Some(raw) => {
+            let mut kinds = Vec::new();
+            for part in raw.split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                kinds.push(
+                    RelationKind::parse(part)
+                        .map_err(|e| ApiError::bad_request(e.to_string()))?,
+                );
+            }
+            Ok(Some(kinds))
+        }
+    }
+}
+
+async fn get_impact(
+    State(state): State<AppState>,
+    Path((namespace, kind, id)): Path<(String, String, String)>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let subject = SubjectRef::new(
+        Namespace::parse(&namespace).map_err(|e| ApiError::bad_request(e.to_string()))?,
+        SubjectKind::parse(&kind).map_err(|e| ApiError::bad_request(e.to_string()))?,
+        id,
+    )
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let kinds = parse_kinds(params.get("kinds").cloned())?;
+    let store = state.store.read().await;
+    let snapshot = AlgorithmGraph::extract(store.graph(), kinds.as_deref());
+    let report = snapshot.impact_of(&subject).ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: format!("unknown subject `{subject}`"),
+    })?;
+    Ok(Json(serde_json::to_value(report).expect("impact serialization")))
+}
+
+async fn get_path(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let parse_ref = |raw: &str| -> Result<SubjectRef, ApiError> {
+        SubjectRef::parse(raw).map_err(|e| ApiError::bad_request(e.to_string()))
+    };
+    let from = parse_ref(
+        params
+            .get("from")
+            .ok_or_else(|| ApiError::bad_request("missing `from`".to_owned()))?,
+    )?;
+    let to = parse_ref(
+        params
+            .get("to")
+            .ok_or_else(|| ApiError::bad_request("missing `to`".to_owned()))?,
+    )?;
+    let kinds = parse_kinds(params.get("kinds").cloned())?;
+    let store = state.store.read().await;
+    let snapshot = AlgorithmGraph::extract(store.graph(), kinds.as_deref());
+    let report = snapshot.shortest_path(&from, &to).ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: format!("no path from `{from}` to `{to}`"),
+    })?;
+    Ok(Json(serde_json::to_value(report).expect("path serialization")))
+}
+
+async fn get_cycles(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let kinds = parse_kinds(params.get("kinds").cloned())?;
+    let store = state.store.read().await;
+    let snapshot = AlgorithmGraph::extract(store.graph(), kinds.as_deref());
+    let report = snapshot.cycles();
+    Ok(Json(serde_json::to_value(report).expect("cycle serialization")))
 }
 
 // --- C4 projection (slice 3, IMPLEMENT-NOW item 12) ------------------------

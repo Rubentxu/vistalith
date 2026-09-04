@@ -286,6 +286,43 @@ pub fn apply_event(
                 )));
             }
         }
+        EventPayload::AdvisoryRaised(raised) => {
+            if graph.node(&raised.about).is_none() {
+                return Err(ProjectionError::UnknownSubject(raised.about.to_string()));
+            }
+            if graph.node(&raised.advisory).is_some() {
+                return Err(ProjectionError::DuplicateSubject(raised.advisory.to_string()));
+            }
+            // SPEC-003: behavior outputs are advisory-class facts about the
+            // graph, never authoritative mutations of it.
+            graph.upsert_subject(
+                raised.advisory.clone(),
+                AuthorityClass::Advisory,
+                event_provenance(event),
+                thread_properties(&[
+                    ("behavior", serde_json::json!(raised.behavior)),
+                    ("note", serde_json::json!(raised.note)),
+                    ("about", serde_json::json!(raised.about.to_string())),
+                ]),
+                sequence,
+            );
+            let fact = RelationFact {
+                relation: RelationRef::new(
+                    raised.advisory.clone(),
+                    RelationKind::Mentions,
+                    raised.about.clone(),
+                )
+                .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                authority: AuthorityClass::Advisory,
+                provenance: event_provenance(event),
+            };
+            if !graph.declare_relation(fact, sequence) {
+                return Err(ProjectionError::DuplicateRelation(format!(
+                    "{} mentions {}",
+                    raised.advisory, raised.about
+                )));
+            }
+        }
         EventPayload::IntentDrafted(drafted) => {
             if graph.node(&drafted.target).is_none() {
                 return Err(ProjectionError::UnknownSubject(drafted.target.to_string()));

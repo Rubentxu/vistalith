@@ -9,12 +9,14 @@ import type {
   GraphPatch,
   GraphState,
   Health,
+  ImpactReport,
   IntentDetail,
   IntentSummary,
   McpServerConfig,
   McpServerInfo,
   PatchOutcome,
   PromotionOutcome,
+  SemanticContextView,
   StoredEvent,
   SubjectNode,
   SubjectRef,
@@ -211,6 +213,31 @@ export class VistalithClient {
 
   async removeMcpServer(name: string): Promise<{ removed: string }> {
     return this.deleteJson<{ removed: string }>(`/mcp/servers/${enc(name)}`);
+  }
+
+  // --- Algorithms + semantic context view (slice 7) ---
+
+  /** Transitive dependents of a subject (SPK-004: impact). */
+  async impact(
+    namespace: string,
+    kind: string,
+    id: string,
+    kinds?: string[],
+  ): Promise<ImpactReport> {
+    const query = kinds ? `?kinds=${enc(kinds.join(","))}` : "";
+    return this.getJson<ImpactReport>(
+      `/algorithms/impact/${enc(namespace)}/${enc(kind)}/${enc(id)}${query}`,
+    );
+  }
+
+  /** Bounded, explainable graph slice (SPEC-005). */
+  async contextView(
+    request: import("./types.js").ContextViewRequest,
+  ): Promise<SemanticContextView> {
+    return this.postJson<SemanticContextView>("/views/context", request, {
+      okStatus: 200,
+      throwOnError: true,
+    });
   }
 
   // --- C4 projection (slice 3) ---

@@ -14,3 +14,4 @@ thiserror = { workspace = true }
 time = { workspace = true }
 sha2 = { workspace = true }
 uuid = { workspace = true }
+petgraph = { workspace = true }

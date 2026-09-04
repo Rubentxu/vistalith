@@ -26,6 +26,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 4 | Herramienta nativa (`graph_search`) + ciclo de vida de VisualIntent (draft/preview/promoción) | hecho |
 | 5 | Spike de SurrealDB (con puerta — **puerta cerrada**, `docs/SURREALDB-SPIKE.md`), fork de hilos + diff/Time Travel del grafo (SPEC-011), shell de escritorio Tauri | hecho |
 | 6 | Cliente MCP (rmcp, stdio + Streamable HTTP), catálogo unificado de tools con grants de permisos con scope (SPEC-009, TOOLS-PERMISSIONS) | hecho |
+| 7 | Comportamientos reactivos (SPEC-003), algoritmos de grafo vía petgraph (ADR-007), vista de contexto semántico (SPEC-005) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -86,13 +87,19 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    ganan. Toda llamada — concedida o rechazada — es un evento durable
    `ToolInvoked` que lleva la fuente de la tool. Los permisos de Vistalith
    restringen; nunca debilitan la policy de SDDK.
+8. Los comportamientos reactivos (SPEC-003) solo emiten eventos advisory —
+   nunca efectos ocultos, nunca estado SDDK autoritativo (forzado
+   estructuralmente: el único payload que un behavior puede emitir es
+   `advisory-raised`). Los advisories son sujetos durables de clase advisory
+   con traza a su trigger vía `causation_id`; el replay no re-ejecuta los
+   behaviors, así que el replay sigue siendo byte-determinista.
 
 ## Estructura del repositorio
 
 ```text
 crates/
 ├── vistalith-domain         # SubjectRef, VEvent, tipos de patch, clases de autoridad
-├── vistalith-graph          # SWG en memoria, proyección de eventos, patches, vista C4, replay, diff
+├── vistalith-graph          # SWG, proyección de eventos, patches, behaviors, algoritmos petgraph, vista de contexto
 ├── vistalith-agent-runtime  # motor de conversación, contratos de proveedor, cliente MCP, tools unificadas
 ├── vistalith-server         # `vistalithd` — servidor axum sobre el log de eventos + SWG
 └── vistalith-spike-surrealdb  # spike SPK-003 de la puerta de almacenamiento (toolchain propia; excluido)
@@ -168,7 +175,23 @@ write solo ejecutan mientras un grant tenga llamadas restantes), y
 conectar/desconectar servidores MCP por stdio o Streamable HTTP; las tools
 descubiertas entran al catálogo unificado con consecuencias clasificadas
 desde las anotaciones MCP — los servidores silenciosos obtienen el
-conservador `write`).
+conservador `write`),
+`POST /views/context` (SPEC-005: porción acotada y explicable del grafo —
+raíces, allowlist de relaciones, profundidad, filtros de autoridad y
+presupuesto de tokens, con una razón de inclusión/exclusión para cada
+sujeto),
+`GET /algorithms/impact/{namespace}/{kind}/{id}`,
+`GET /algorithms/path?from=..&to=..`, `GET /algorithms/cycles` (ADR-007:
+petgraph sobre una instantánea extraída; `?kinds=` restringe los tipos de
+arista).
+
+Los appends de eventos en vivo (`POST /events`) disparan los comportamientos
+reactivos incorporados (SPEC-003): `impact-advisory` (un cambio en X avisa a
+cada dependiente de `X depends_on`), `contradiction-advisory`,
+`stale-evidence-advisory` y `missing-evidence-advisory`. Los advisories son
+sujetos durables de clase advisory con traza a su trigger vía
+`causation_id`; el replay nunca re-ejecuta los behaviors, así que el replay
+sigue siendo byte-determinista (hito M4).
 
 El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
 (sujetos/aristas, con selector de time travel y diff estructural al ver una

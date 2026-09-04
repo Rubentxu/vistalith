@@ -422,3 +422,55 @@ export interface McpServerInfo {
   status: "connected" | "unhealthy";
   tools: number;
 }
+
+// --- Graph algorithms + semantic context view (SPEC-005, slice 7) --------------
+
+export interface ImpactReport {
+  root: string;
+  impacted: string[];
+}
+
+export interface ContextViewRequest {
+  /** Root identities as `ns:kind:id` strings. */
+  roots: string[];
+  /** Relation kinds the slice may traverse; omitted = every kind. */
+  relations?: string[];
+  max_depth?: number;
+  include_derived?: boolean;
+  include_advisory?: boolean;
+  /** Approximate token budget (≈ chars / 4). Default 8000. */
+  token_budget?: number;
+}
+
+export interface ContextItem {
+  subject: string;
+  authority: string;
+  depth: number;
+  reason:
+    | { reason: "root" }
+    | { reason: "via"; from: string; kind: string; depth: number };
+  properties: Record<string, unknown>;
+  last_event_sequence: number;
+  last_touch: string;
+  last_actor: string;
+  estimated_tokens: number;
+}
+
+export interface ContextExclusion {
+  subject: string;
+  exclusion:
+    | { reason: "unknown-subject" }
+    | { reason: "last-touched-before-cutoff"; last_touch: string }
+    | { reason: "authority-class"; class: string }
+    | { reason: "deeper-than-max-depth"; depth: number }
+    | { reason: "token-budget-exhausted" };
+}
+
+export interface SemanticContextView {
+  roots: string[];
+  items: ContextItem[];
+  exclusions: ContextExclusion[];
+  estimated_tokens: number;
+  token_budget: number;
+  truncated: boolean;
+}

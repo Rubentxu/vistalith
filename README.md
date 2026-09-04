@@ -25,6 +25,7 @@ built and changed. The full planning baseline lives in
 | 4 | Native tool (`graph_search`) + VisualIntent draft/preview/promote lifecycle | done |
 | 5 | SurrealDB spike (gated — **gate closed**, `docs/SURREALDB-SPIKE.md`), thread fork + graph diff/time travel (SPEC-011), Tauri desktop shell | done |
 | 6 | MCP client (rmcp, stdio + Streamable HTTP), unified tool catalog with scoped permission grants (SPEC-009, TOOLS-PERMISSIONS) | done |
+| 7 | Reactive behaviors (SPEC-003), graph algorithms via petgraph (ADR-007), semantic context view (SPEC-005) | done |
 
 ## Normative baseline decisions
 
@@ -81,13 +82,19 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    explicit denies always win. Every call — granted or refused — is a
    durable `ToolInvoked` event carrying the tool's source. Vistalith
    permissions restrict; they never weaken SDDK policy.
+8. Reactive behaviors (SPEC-003) emit advisory events only — never hidden
+   side effects, never authoritative SDDK state (structurally enforced:
+   the only payload a behavior may emit is `advisory-raised`). Advisories
+   are durable, advisory-class subjects traced to their trigger via
+   `causation_id`; replay does not re-run behaviors, so replay stays
+   byte-deterministic.
 
 ## Repository layout
 
 ```text
 crates/
 ├── vistalith-domain         # SubjectRef, VEvent, patch types, authority classes
-├── vistalith-graph          # in-memory SWG, event projection, patches, C4 view, replay, diff
+├── vistalith-graph          # SWG, event projection, patches, behaviors, petgraph algorithms, context view
 ├── vistalith-agent-runtime  # conversation engine, provider contracts, MCP client, unified tools
 ├── vistalith-server         # `vistalithd` — axum server over the event log + SWG
 └── vistalith-spike-surrealdb  # SPK-003 storage gate spike (own toolchain; excluded)
@@ -161,7 +168,20 @@ remaining calls), and `GET|POST /mcp/servers`,
 `DELETE /mcp/servers/{name}` (SPEC-009: connect/disconnect MCP servers over
 stdio or Streamable HTTP; discovered tools join the unified catalog with
 consequences classified from MCP annotations — silent servers get the
-conservative `write`).
+conservative `write`),
+`POST /views/context` (SPEC-005: bounded, explainable graph slice — roots,
+relation allowlist, depth, authority filters and token budget, with an
+inclusion/exclusion reason for every subject),
+`GET /algorithms/impact/{namespace}/{kind}/{id}`,
+`GET /algorithms/path?from=..&to=..`, `GET /algorithms/cycles` (ADR-007:
+petgraph over an extracted snapshot; `?kinds=` restricts edge kinds).
+
+Live event appends (`POST /events`) dispatch the built-in reactive
+behaviors (SPEC-003): `impact-advisory` (a change to X advises every `X
+depends_on` dependent), `contradiction-advisory`, `stale-evidence-advisory`
+and `missing-evidence-advisory`. Advisories are durable advisory-class
+subjects traced to their trigger via `causation_id`; replay never re-runs
+behaviors, so replay stays byte-deterministic (milestone M4).
 
 The web client has three lenses over the same identities: **Graph**
 (subjects/edges, with a time-travel selector and structural diff when

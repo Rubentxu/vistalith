@@ -21,6 +21,8 @@ pub enum StoreError {
     Serialization(String),
     #[error("unknown revision {0}: the log only reaches revision {1}")]
     UnknownRevision(u64, u64),
+    #[error(transparent)]
+    BehaviorOutputRejected(#[from] crate::behavior::BehaviorError),
 }
 
 /// Log-assigned coordinates of a committed event.

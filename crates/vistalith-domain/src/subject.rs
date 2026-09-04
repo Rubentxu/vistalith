@@ -161,6 +161,8 @@ pub enum SubjectKind {
     Option,
     SketchElement,
     VisualProposal,
+    /// Output of a reactive behavior: advisory, never authoritative (SPEC-003).
+    Advisory,
     /// A kind outside the shipped vocabulary (lowercase alphanumeric).
     Other(String),
 }
@@ -275,6 +277,7 @@ kind_impl! {
     Option => "option",
     SketchElement => "sketch-element",
     VisualProposal => "visual-proposal",
+    Advisory => "advisory",
 }
 
 /// Stable, revision-aware semantic identity (ADR-011).

@@ -56,6 +56,9 @@ pub enum EventPayload {
     /// A thread was forked at a turn boundary (SPEC-011): the fork is a new
     /// durable thread whose copied items keep semantic subject bindings.
     ThreadForked(ThreadForked),
+    /// A reactive behavior raised an advisory (SPEC-003): behavior outputs
+    /// are events, never hidden side effects, and never authoritative.
+    AdvisoryRaised(AdvisoryRaised),
     /// A visual gesture produced an intent draft (SPEC-006: drafts only —
     /// nothing executes until explicit promotion).
     IntentDrafted(IntentDrafted),
@@ -147,6 +150,20 @@ pub struct ToolInvoked {
     /// fork (SPEC-011 binding preservation). Absent on live calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_of: Option<SubjectRef>,
+}
+
+/// An advisory raised by a reactive behavior (SPEC-003). The advisory is a
+/// Vistalith-owned, advisory-class subject linked to the subject it is about
+/// with a `mentions` relation; raising it never mutates SDDK truth.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdvisoryRaised {
+    /// The advisory subject this event creates.
+    pub advisory: SubjectRef,
+    /// The subject the advisory is about.
+    pub about: SubjectRef,
+    /// Behavior identity, e.g. `impact-advisory@1`.
+    pub behavior: String,
+    pub note: String,
 }
 
 /// A thread fork (SPEC-011): a new thread carrying the source's durable
@@ -250,6 +267,7 @@ impl VEvent {
             EventPayload::TurnCompleted(_) => "turn-completed",
             EventPayload::ToolInvoked(_) => "tool-invoked",
             EventPayload::ThreadForked(_) => "thread-forked",
+            EventPayload::AdvisoryRaised(_) => "advisory-raised",
             EventPayload::IntentDrafted(_) => "intent-drafted",
             EventPayload::IntentPromoted(_) => "intent-promoted",
         }
