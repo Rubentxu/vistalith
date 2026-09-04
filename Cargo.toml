@@ -1,0 +1,54 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/vistalith-domain",
+    "crates/vistalith-graph",
+    "crates/vistalith-server",
+]
+# dev/ holds the pinned SDDK checkout: it is its own cargo workspace and is
+# consumed as path dependencies, never as members of this workspace.
+exclude = ["dev"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT"
+authors = ["Rubentxu"]
+
+[workspace.dependencies]
+# --- SDDK core: direct path dependencies into the pinned intermediate
+# checkout under dev/ (see scripts/sddk-pin.env + docs/DEPENDENCIES.md).
+# All crates resolve to the same pinned revision; never mix revisions.
+sddk-domain = { path = "dev/sddk-framework/crates/sddk-domain" }
+sddk-storage = { path = "dev/sddk-framework/crates/sddk-storage" }
+sddk-engine = { path = "dev/sddk-framework/crates/sddk-engine" }
+sddk-gateway = { path = "dev/sddk-framework/crates/sddk-gateway" }
+sddk-vault = { path = "dev/sddk-framework/crates/sddk-vault" }
+sddk-testkit = { path = "dev/sddk-framework/crates/sddk-testkit" }
+
+# --- Baseline pins (technology/STACK.md) ---
+# Consumed by the agent-runtime slice; recorded here as the version line
+# agreed in the baseline. Verified when vistalith-agent-runtime lands.
+rig-core = "0.42"
+rmcp = "3.2"
+petgraph = "0.8"
+
+# Shared infrastructure, pinned at bootstrap; exact versions in Cargo.lock.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+time = { version = "0.3", features = ["formatting", "parsing", "serde", "serde-well-known", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+axum = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2 = "0.10"
+
+# --- Vistalith crates ---
+vistalith-domain = { path = "crates/vistalith-domain" }
+vistalith-graph = { path = "crates/vistalith-graph" }
+
+[profile.release]
+lto = "thin"

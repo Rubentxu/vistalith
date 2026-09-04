@@ -1,0 +1,117 @@
+{
+  "description": "Slice-1 deterministic fixture: one arch container, its repository, an SDDK work-item observation and two typed relations. Raw VEvent log; sequences and revisions are assigned by the store at append time.",
+  "events": [
+    {
+      "event_id": "0198f6c0-0000-7000-8000-000000000001",
+      "actor": "fixture:sample-world",
+      "timestamp": "2026-09-04T09:00:00Z",
+      "subjects": [
+        { "namespace": "arch", "kind": "container", "id": "payment-service" }
+      ],
+      "correlation_id": "0198f6c0-0000-7000-8000-0000000000f1",
+      "trace_id": "fixture-sample-world",
+      "type": "subject-defined",
+      "payload": {
+        "subject": { "namespace": "arch", "kind": "container", "id": "payment-service" },
+        "authority": "authoritative",
+        "provenance": { "source": "user:rubentxu" },
+        "properties": {
+          "name": "Payment Service",
+          "description": "Processes payments for the Vistalith slice-1 UAT world."
+        }
+      }
+    },
+    {
+      "event_id": "0198f6c0-0000-7000-8000-000000000002",
+      "actor": "fixture:sample-world",
+      "timestamp": "2026-09-04T09:00:01Z",
+      "subjects": [
+        { "namespace": "code", "kind": "repository", "id": "payments-api" }
+      ],
+      "correlation_id": "0198f6c0-0000-7000-8000-0000000000f1",
+      "trace_id": "fixture-sample-world",
+      "type": "subject-defined",
+      "payload": {
+        "subject": { "namespace": "code", "kind": "repository", "id": "payments-api" },
+        "authority": "authoritative",
+        "provenance": { "source": "user:rubentxu" },
+        "properties": {
+          "url": "https://github.com/Rubentxu/payments-api"
+        }
+      }
+    },
+    {
+      "event_id": "0198f6c0-0000-7000-8000-000000000003",
+      "actor": "fixture:sample-world",
+      "timestamp": "2026-09-04T09:00:02Z",
+      "subjects": [
+        { "namespace": "sddk", "kind": "work-item", "id": "TEST-MODEL-001", "revision": "d43b120b6e67d467033acd61f7f3c286559a97b7" }
+      ],
+      "correlation_id": "0198f6c0-0000-7000-8000-0000000000f1",
+      "trace_id": "fixture-sample-world",
+      "type": "subject-defined",
+      "payload": {
+        "subject": { "namespace": "sddk", "kind": "work-item", "id": "TEST-MODEL-001", "revision": "d43b120b6e67d467033acd61f7f3c286559a97b7" },
+        "authority": "derived",
+        "provenance": {
+          "source": "sddk:v1.82.0",
+          "source_revision": "d43b120b6e67d467033acd61f7f3c286559a97b7",
+          "note": "Observation of SDDK-owned truth; authority stays with SDDK."
+        },
+        "properties": {
+          "title": "Model the payment service in the SWG"
+        }
+      }
+    },
+    {
+      "event_id": "0198f6c0-0000-7000-8000-000000000004",
+      "actor": "fixture:sample-world",
+      "timestamp": "2026-09-04T09:00:03Z",
+      "subjects": [
+        { "namespace": "code", "kind": "repository", "id": "payments-api" },
+        { "namespace": "arch", "kind": "container", "id": "payment-service" }
+      ],
+      "correlation_id": "0198f6c0-0000-7000-8000-0000000000f1",
+      "trace_id": "fixture-sample-world",
+      "type": "relation-declared",
+      "payload": {
+        "fact": {
+          "relation": {
+            "from": { "namespace": "code", "kind": "repository", "id": "payments-api" },
+            "kind": "implements",
+            "to": { "namespace": "arch", "kind": "container", "id": "payment-service" }
+          },
+          "authority": "derived",
+          "provenance": { "source": "user:rubentxu", "note": "Repository declared as implementing the container." }
+        }
+      }
+    },
+    {
+      "event_id": "0198f6c0-0000-7000-8000-000000000005",
+      "actor": "fixture:sample-world",
+      "timestamp": "2026-09-04T09:00:04Z",
+      "subjects": [
+        { "namespace": "sddk", "kind": "work-item", "id": "TEST-MODEL-001" },
+        { "namespace": "arch", "kind": "container", "id": "payment-service" }
+      ],
+      "correlation_id": "0198f6c0-0000-7000-8000-0000000000f1",
+      "trace_id": "fixture-sample-world",
+      "type": "relation-declared",
+      "payload": {
+        "fact": {
+          "relation": {
+            "from": { "namespace": "sddk", "kind": "work-item", "id": "TEST-MODEL-001" },
+            "kind": "affects",
+            "to": { "namespace": "arch", "kind": "container", "id": "payment-service" }
+          },
+          "authority": "advisory",
+          "provenance": {
+            "source": "agent:planner",
+            "confidence": 0.6,
+            "note": "Cross-domain edge stays advisory until promoted."
+          }
+        }
+      }
+    }
+  ]
+}

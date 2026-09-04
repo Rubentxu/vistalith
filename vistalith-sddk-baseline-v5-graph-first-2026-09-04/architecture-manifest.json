@@ -1,0 +1,32 @@
+{
+  "baseline": "v5-graph-first",
+  "date": "2026-09-04",
+  "supersedes": [
+    "v1",
+    "v2",
+    "v4 and intermediate design packs"
+  ],
+  "product": "Vistalith",
+  "core": "SDDK direct Rust crates",
+  "graph": {
+    "model": "Semantic World Graph",
+    "event_sourced_vistalith_state": true,
+    "activegraph_dependency": false,
+    "activegraph_inspired": true,
+    "storage_candidate": "SurrealDB embedded 3.2.x",
+    "algorithms": "petgraph 0.8.x"
+  },
+  "agentic": {
+    "backend": "Rust",
+    "llm_adapter": "rig-core 0.42.x",
+    "mcp": "rmcp 3.2.x",
+    "chat_primary_door": true
+  },
+  "visual": [
+    "Excalidraw",
+    "LikeC4",
+    "React Flow",
+    "ELK"
+  ],
+  "sddk_pull_up_process": true
+}

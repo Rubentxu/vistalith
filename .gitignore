@@ -1,0 +1,17 @@
+# Pinned local dependency checkouts (recreated by scripts/bootstrap-dev.sh)
+/dev/
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
