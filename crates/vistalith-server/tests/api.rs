@@ -174,3 +174,25 @@ async fn graph_endpoint_is_canonical_and_revisioned() {
     assert_eq!(graph["subjects"].as_array().unwrap().len(), 1);
     assert_eq!(graph["relations"].as_array().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn browser_clients_can_preflight_the_api() {
+    let response = app()
+        .oneshot(
+            Request::options("/subjects")
+                .header("origin", "http://localhost:5173")
+                .header("access-control-request-method", "GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("in-memory service");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .expect("CORS header"),
+        "*"
+    );
+}

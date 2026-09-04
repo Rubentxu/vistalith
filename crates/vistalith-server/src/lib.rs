@@ -34,6 +34,17 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
+    // Slice-2: the web client runs on a different origin in dev, so the API
+    // is CORS-permissive for now. Tighten when the client is served by
+    // vistalithd itself or embedded in Tauri.
+    use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN};
+    use tower_http::cors::{Any, CorsLayer};
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers([CONTENT_TYPE, ACCEPT, AUTHORIZATION, ORIGIN]);
+
     Router::new()
         .route("/health", get(health))
         .route("/graph", get(get_graph))
@@ -41,6 +52,7 @@ pub fn router(state: AppState) -> Router {
         .route("/subjects/{namespace}/{kind}/{id}", get(get_subject))
         .route("/events", get(get_events).post(post_event))
         .route("/patches", post(post_patch))
+        .layer(cors)
         .with_state(state)
 }
 

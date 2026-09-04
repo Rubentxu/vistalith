@@ -16,7 +16,10 @@ crates/
 ├── vistalith-domain   # SubjectRef (ADR-011), VEvent (SPEC-002), patches, authority
 ├── vistalith-graph    # in-memory SWG, event projection, patches, deterministic replay
 └── vistalith-server   # `vistalithd` — tiny axum server over the event log + SWG
-apps/  packages/       # TypeScript experience layer (later slice)
+packages/
+└── client             # @vistalith/client — TS mirror of the protocol + typed HTTP client
+apps/
+└── web                # React/Vite graph lens: subjects/edges, selection by SubjectRef
 dev/                   # pinned SDDK checkout + pinned sddk CLI binary (gitignored)
 docs/DEPENDENCIES.md   # every dependency pin and the pin policy
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
@@ -34,7 +37,13 @@ vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
 - [x] Deterministic fixture replay: the same raw log always produces the same
       SHA-256 graph digest; rebuilds are verified against stored revisions.
 - [x] Tiny `vistalithd` (axum): health, graph, subjects, events, patches.
-- [ ] TypeScript client displaying subjects/edges.
+- [x] `@vistalith/client`: typed TS mirror of `SubjectRef`/`VEvent`/patches +
+      fetch client (pnpm workspace, exact pins, pnpm 12).
+- [x] Web graph lens (`apps/web`): React 19 + Vite 8 + TanStack Query +
+      Zustand; namespace-column SVG of subjects/edges; selection propagates
+      `SubjectRef`s across list, graph and details lenses (never renderer
+      IDs); adjacency highlight, authority-colored facts, advisory edges
+      dashed; CORS enabled on `vistalithd` for the dev origin.
 - [ ] SurrealDB spike (only after semantics/tests — gate pending).
 - [ ] First conversation thread, one provider through Rig, one C4 projection.
 
@@ -60,20 +69,30 @@ scripts/bootstrap-dev.sh --pin v1.83.0  # move the pin (updates scripts/sddk-pin
 
 ## Running
 
+Rust core (24 tests):
+
 ```bash
-cargo test                                            # 23 tests, all crates
+cargo test
 cargo run -p vistalith-server --bin vistalithd \
   --fixture crates/vistalith-graph/tests/fixtures/sample-world.json --port 7420
-
-curl localhost:7420/health
-curl localhost:7420/subjects/sddk/work-item/TEST-MODEL-001
-curl -X POST localhost:7420/patches -H 'content-type: application/json' -d '{...}'
 ```
 
 HTTP API: `GET /health`, `GET /graph`, `GET /subjects`,
 `GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`,
 `POST /patches` (applied → `200`, rejected → `409`; rejections are durable
 events, see `GET /events`).
+
+TypeScript workspace (24 tests; Node ≥24, pnpm via `packageManager`):
+
+```bash
+pnpm install
+pnpm build       # client (tsc) + web (vite)
+pnpm test        # vitest in both packages
+pnpm lint        # biome
+pnpm dev:web     # http://localhost:5173, talks to vistalithd on :7420
+```
+
+Set `VITE_VISTALITHD_URL` to point the web client at another `vistalithd`.
 
 ## Invariants enforced in code
 

@@ -1,0 +1,134 @@
+import type {
+  AppendedEvent,
+  GraphPatch,
+  GraphState,
+  Health,
+  PatchOutcome,
+  StoredEvent,
+  SubjectNode,
+  SubjectRef,
+  VEvent,
+} from "./types.js";
+import { subjectRefToString } from "./types.js";
+
+/** Error raised for non-2xx responses; carries the parsed server message. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export interface VistalithClientOptions {
+  /** Base URL of `vistalithd`, e.g. `http://127.0.0.1:7420`. No trailing slash. */
+  baseUrl: string;
+  /** Fetch implementation; defaults to global `fetch` (injectable for tests). */
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Typed HTTP client for `vistalithd` (slice-1 API):
+ * health, graph, subjects, events (append) and patches (propose).
+ */
+export class VistalithClient {
+  private readonly baseUrl: string;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(options: VistalithClientOptions) {
+    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  async health(): Promise<Health> {
+    return this.getJson<Health>("/health");
+  }
+
+  async graph(): Promise<GraphState> {
+    return this.getJson<GraphState>("/graph");
+  }
+
+  async subjects(): Promise<SubjectNode[]> {
+    const body = await this.getJson<{ subjects: SubjectNode[] }>("/subjects");
+    return body.subjects;
+  }
+
+  /** Fetches one subject by SubjectRef (identity only; revision is ignored). */
+  async subject(ref: SubjectRef): Promise<SubjectNode> {
+    const path = `/subjects/${enc(ref.namespace)}/${enc(ref.kind)}/${enc(ref.id)}`;
+    return this.getJson<SubjectNode>(path);
+  }
+
+  async events(): Promise<StoredEvent[]> {
+    const body = await this.getJson<{ events: StoredEvent[] }>("/events");
+    return body.events;
+  }
+
+  /** Appends one durable event; throws `ApiError` on duplicates (409) or invalid events (422). */
+  async appendEvent(event: VEvent): Promise<AppendedEvent> {
+    return this.postJson<AppendedEvent>("/events", event, {
+      okStatus: 201,
+      throwOnError: true,
+    });
+  }
+
+  /**
+   * Proposes a graph patch. Returns the outcome for both statuses: applied
+   * (200) and rejected (409) — rejections are durable events, so they are a
+   * normal result, not a transport error.
+   */
+  async proposePatch(patch: GraphPatch): Promise<PatchOutcome> {
+    return this.postJson<PatchOutcome>("/patches", patch, {
+      okStatus: 200,
+      throwOnError: false,
+    });
+  }
+
+  private async getJson<T>(path: string): Promise<T> {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`);
+    return this.parse<T>(response, { okStatus: 200, throwOnError: true });
+  }
+
+  private async postJson<T>(
+    path: string,
+    body: unknown,
+    options: { okStatus: number; throwOnError: boolean },
+  ): Promise<T> {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return this.parse<T>(response, options);
+  }
+
+  private async parse<T>(
+    response: Response,
+    options: { okStatus: number; throwOnError: boolean },
+  ): Promise<T> {
+    const text = await response.text();
+    const body: unknown = text.length > 0 ? JSON.parse(text) : null;
+    if (response.status === options.okStatus) {
+      return body as T;
+    }
+    const message =
+      body !== null &&
+      typeof body === "object" &&
+      "error" in body &&
+      typeof (body as { error: unknown }).error === "string"
+        ? (body as { error: string }).error
+        : `unexpected status ${response.status}`;
+    if (options.throwOnError || response.status >= 500) {
+      throw new ApiError(response.status, message);
+    }
+    return body as T;
+  }
+}
+
+function enc(segment: string): string {
+  return encodeURIComponent(segment);
+}
+
+export { subjectRefToString };

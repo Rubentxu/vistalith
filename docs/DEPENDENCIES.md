@@ -53,9 +53,11 @@ must use this pinned binary, never a `cargo install` of a moving revision.
 
 ## TypeScript stack
 
-Node 24 LTS, pnpm 12, TypeScript 7 stable, React 19.2, Vite 8, Tauri 2,
-TanStack Query/Router, Zustand, Vitest, Playwright, Biome. Exact pins will live
-in `package.json` + `pnpm-lock.yaml` when `apps/web` is bootstrapped.
+Node ≥24 LTS, pnpm 12 (via `packageManager` in the root `package.json`),
+TypeScript 7.0.2, React 19.2.8, Vite 8.2.2, TanStack Query 5, Zustand 5,
+Vitest 5, Testing Library, Biome 2.5. Exact pins live in the package.json
+files (`.npmrc` sets `save-exact=true`) and `pnpm-lock.yaml` (committed).
+Playwright stays unpinned until the first e2e slice.
 
 ## Toolchain
 
