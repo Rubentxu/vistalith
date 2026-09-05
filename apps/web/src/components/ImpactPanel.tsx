@@ -24,9 +24,9 @@ export function ImpactPanel({
   const identity = selected ? subjectRefToString(selected) : null;
 
   const impact = useQuery({
-    queryKey: ["impact", identity],
+    queryKey: ["impact-full", identity],
     queryFn: () =>
-      client.impact(
+      client.impactFull(
         (selected as SubjectRef).namespace,
         (selected as SubjectRef).kind,
         (selected as SubjectRef).id,
@@ -84,22 +84,41 @@ export function ImpactPanel({
       ) : null}
       <h3>Impact</h3>
       {impact.data ? (
-        impact.data.impacted.length === 0 ? (
+        impact.data.transitively_impacted?.length === 0 &&
+        impact.data.direct_dependents.length === 0 ? (
           <p className="empty">nothing depends on this subject</p>
         ) : (
           <>
             <p className="impact-count">
-              {impact.data.impacted.length} subject
-              {impact.data.impacted.length === 1 ? "" : "s"} transitively
-              impacted
+              {impact.data.direct_dependents?.length ?? 0} direct ·{" "}
+              {impact.data.transitively_impacted?.length ?? 0} transitive
             </p>
             <ul className="impact-list">
-              {impact.data.impacted.map((subject) => (
+              {impact.data.transitively_impacted.map((subject) => (
                 <li key={subject}>
                   <code>{subject}</code>
                 </li>
               ))}
             </ul>
+            {impact.data.affected_tests.length > 0 ? (
+              <p className="impact-section">tests: {impact.data.affected_tests?.length}</p>
+            ) : null}
+            {(impact.data.stale_evidence?.length ?? 0) > 0 ? (
+              <p className="impact-section">
+                stale evidence: {impact.data.stale_evidence?.length}
+              </p>
+            ) : null}
+            {(impact.data.decisions_potentially_invalidated?.length ?? 0) > 0 ? (
+              <p className="impact-section">
+                decisions possibly invalidated:{" "}
+                {impact.data.decisions_potentially_invalidated?.length}
+              </p>
+            ) : null}
+            {(impact.data.unknown_impact?.length ?? 0) > 0 ? (
+              <p className="impact-section">
+                unknown impact: {impact.data.unknown_impact?.length}
+              </p>
+            ) : null}
           </>
         )
       ) : impact.isError ? (

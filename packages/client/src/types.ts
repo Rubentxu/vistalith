@@ -425,6 +425,17 @@ export interface ImpactReport {
   impacted: string[];
 }
 
+/** Full analysis (visual/IMPACT.md): every section explicit. */
+export interface ImpactAnalysis {
+  root: string;
+  direct_dependents: string[];
+  transitively_impacted: string[];
+  affected_tests: string[];
+  stale_evidence: string[];
+  decisions_potentially_invalidated: string[];
+  unknown_impact: string[];
+}
+
 export interface ContextViewRequest {
   /** Root identities as `ns:kind:id` strings. */
   roots: string[];

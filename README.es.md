@@ -35,6 +35,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 13 | Lente de decisiones — inventario pregunta/opciones/rechazadas/evidencia por decisión (M9, DECISIONS-TIME.md) | hecho |
 | 14 | Pull-up de innovaciones — evaluación focus-test + envío gobernado a SDDK (M10, INNOVATION-PULL-UP.md) | hecho |
 | 15 | Checks de UAT — registros durables pass/fail/blocked por escenario con inventario en lente (UAT-STUDIO.md) | hecho |
+| 16 | Análisis de impacto completo — directos/transitivos, tests, evidencia obsoleta, decisiones invalidadas, impacto desconocido explícito (visual/IMPACT.md) | hecho |
 
 ## Decisiones normativas del baseline
 

@@ -892,8 +892,22 @@ async fn get_impact(
     )
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
     let kinds = parse_kinds(params.get("kinds").cloned())?;
+    let full = params.get("full").map(|v| v == "true").unwrap_or(false);
     let store = state.store.read().await;
     let snapshot = AlgorithmGraph::extract(store.graph(), kinds.as_deref());
+    if full {
+        // Full analysis (visual/IMPACT.md): tests/evidence/decisions/
+        // unknown sections explicit.
+        let analysis = snapshot
+            .impact_analysis(&subject, full)
+            .ok_or_else(|| ApiError {
+                status: StatusCode::NOT_FOUND,
+                message: format!("unknown subject `{subject}`"),
+            })?;
+        return Ok(Json(
+            serde_json::to_value(analysis).expect("impact serialization"),
+        ));
+    }
     let report = snapshot.impact_of(&subject).ok_or_else(|| ApiError {
         status: StatusCode::NOT_FOUND,
         message: format!("unknown subject `{subject}`"),

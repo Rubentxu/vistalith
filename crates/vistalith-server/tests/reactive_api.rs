@@ -290,3 +290,51 @@ async fn context_view_rejects_empty_roots() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+// --- Full impact analysis (slice 16, visual/IMPACT.md) ------------------------
+
+#[tokio::test]
+async fn full_impact_analysis_surfaces_all_sections() {
+    let app = empty_store();
+    dependency_chain(&app).await;
+
+    let (_, analysis) = call(
+        app.clone(),
+        Request::get("/algorithms/impact/arch/container/ledger?full=true")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    // Direct dependents (one hop back).
+    assert_eq!(
+        analysis["direct_dependents"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // Transitive includes gateway.
+    assert!(
+        analysis["transitively_impacted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| *s == serde_json::json!("arch:container:gateway"))
+    );
+    // Tests/evidence/decisions sections exist (possibly empty here).
+    assert!(analysis["affected_tests"].is_array());
+    assert!(analysis["stale_evidence"].is_array());
+    assert!(analysis["decisions_potentially_invalidated"].is_array());
+    assert!(analysis["unknown_impact"].is_array());
+
+    // Without full=true, the legacy lightweight report shape applies.
+    let (_, report) = call(
+        app,
+        Request::get("/algorithms/impact/arch/container/ledger")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(report["impacted"].is_array());
+    assert!(report.get("direct_dependents").is_none());
+}

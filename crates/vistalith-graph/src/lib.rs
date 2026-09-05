@@ -20,7 +20,9 @@ mod patch;
 mod projection;
 mod store;
 
-pub use algorithms::{AlgorithmGraph, CycleReport, ImpactReport, PathReport, TopoReport};
+pub use algorithms::{
+    AlgorithmGraph, CycleReport, ImpactAnalysis, ImpactReport, PathReport, TopoReport,
+};
 pub use decisions::{DecisionAlternative, DecisionEntry, DecisionsLens, decisions_lens};
 pub use why::{WhyLink, WhyPath, why_path};
 pub use context::{

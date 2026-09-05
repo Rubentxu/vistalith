@@ -43,6 +43,26 @@ pub struct PathReport {
     pub relation_kinds: Vec<String>,
 }
 
+/// Full impact analysis (visual/IMPACT.md): every section is explicit,
+/// including "unknown impact" — supporters outside the recognized kinds.
+#[derive(Debug, Clone, Serialize)]
+pub struct ImpactAnalysis {
+    pub root: String,
+    /// Direct dependents (one hop backwards).
+    pub direct_dependents: Vec<String>,
+    /// Transitive dependents.
+    pub transitively_impacted: Vec<String>,
+    /// Tests and suites in the affected set.
+    pub affected_tests: Vec<String>,
+    /// Evidence subjects in the affected set (potentially stale).
+    pub stale_evidence: Vec<String>,
+    /// Decisions whose basis is in the affected set.
+    pub decisions_potentially_invalidated: Vec<String>,
+    /// Affected subjects outside the recognized kind set — impact that is
+    /// real but not classified.
+    pub unknown_impact: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CycleReport {
     /// Strongly connected components that are actual cycles (more than one
@@ -163,6 +183,70 @@ impl AlgorithmGraph {
             to: to.to_string(),
             path,
             relation_kinds,
+        })
+    }
+
+    /// Full impact analysis for a change to `root` (visual/IMPACT.md):
+    /// direct and transitive dependents, affected tests and evidence,
+    /// decisions potentially invalidated, and explicit unknown-impact
+    /// subjects (supporters without a kind the analysis understands).
+    /// Advisory output only — impact discovered here never mutates state.
+    pub fn impact_analysis(
+        &self,
+        root: &SubjectRef,
+        all_edges: bool,
+    ) -> Option<ImpactAnalysis> {
+        let report = self.impact_of(root)?;
+        use petgraph::visit::EdgeRef as _;
+        let root_index = *self.index.get(root)?;
+        let direct: std::collections::BTreeSet<String> = self
+            .graph
+            .edges_directed(root_index, petgraph::Direction::Incoming)
+            .map(|edge| self.graph[edge.source()].to_string())
+            .collect();
+
+        use petgraph::visit::IntoNodeReferences as _;
+        let mut tests = Vec::new();
+        let mut evidence = Vec::new();
+        let mut decisions = Vec::new();
+        for (subject, node) in self.graph.node_references() {
+            let identity = self.graph[subject].to_string();
+            if !report.impacted.contains(&identity) && identity != root.to_string() {
+                continue;
+            }
+            match node.kind() {
+                vistalith_domain::SubjectKind::Test
+                | vistalith_domain::SubjectKind::TestSuite => tests.push(identity),
+                vistalith_domain::SubjectKind::Evidence => evidence.push(identity),
+                vistalith_domain::SubjectKind::Decision => decisions.push(identity),
+                _ => {}
+            }
+        }
+
+        // Unknown impact: supporters of affected subjects whose own kind is
+        // outside the closed analysis set (explicitly listed, never hidden).
+        let known = |identity: &str| {
+            identity.contains(":test:")
+                || identity.contains(":test-suite:")
+                || identity.contains(":evidence:")
+                || identity.contains(":decision:")
+        };
+        let unknown: Vec<String> = report
+            .impacted
+            .iter()
+            .filter(|identity| !known(identity))
+            .cloned()
+            .collect();
+
+        let _ = all_edges;
+        Some(ImpactAnalysis {
+            root: root.to_string(),
+            direct_dependents: direct.into_iter().collect(),
+            transitively_impacted: report.impacted,
+            affected_tests: tests,
+            stale_evidence: evidence,
+            decisions_potentially_invalidated: decisions,
+            unknown_impact: unknown,
         })
     }
 

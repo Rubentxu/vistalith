@@ -34,6 +34,7 @@ built and changed. The full planning baseline lives in
 | 13 | Decision lens — question/options/rejected/evidence inventory per decision (M9, DECISIONS-TIME.md) | done |
 | 14 | Innovation pull-up — focus-test evaluation + governed submission to SDDK (M10, INNOVATION-PULL-UP.md) | done |
 | 15 | UAT checks — durable pass/fail/blocked records per scenario with lens inventory (UAT-STUDIO.md) | done |
+| 16 | Full impact analysis — direct/transitive, tests, stale evidence, invalidated decisions, explicit unknown impact (visual/IMPACT.md) | done |
 
 ## Normative baseline decisions
 
@@ -242,7 +243,11 @@ duplicated authority, deterministic — classify it deterministically
 (VISTALITH_ONLY → SDDK_PROPOSAL) and, for proposals, submit it as governed
 evidence through the SDDK capability gateway),
 `POST /uat/checks` + `GET /lens/uat` (slice 15: durable UAT checks per
-scenario with the latest verdict). `POST /intents/{id}/promote` takes `approve`
+scenario with the latest verdict),
+`GET /algorithms/impact/{ns}/{kind}/{id}?full=true` (slice 16: the full
+impact analysis — direct and transitive dependents, affected tests, stale
+evidence, decisions possibly invalidated, and explicit unknown impact;
+advisory only). `POST /intents/{id}/promote` takes `approve`
 (SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
 --sddk-project`, promotions on SDDK-owned subjects submit a governed
 proposal through the SDDK capability gateway — low risk executes and

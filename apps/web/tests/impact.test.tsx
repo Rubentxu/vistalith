@@ -36,10 +36,15 @@ describe("ImpactPanel (slice 7)", () => {
         return Promise.resolve(
           jsonResponse(200, {
             root: "arch:container:ledger",
-            impacted: [
+            direct_dependents: ["arch:container:payment-service"],
+            transitively_impacted: [
               "arch:container:payment-service",
               "arch:container:gateway",
             ],
+            affected_tests: [],
+            stale_evidence: [],
+            decisions_potentially_invalidated: [],
+            unknown_impact: [],
           }),
         );
       }
@@ -56,7 +61,7 @@ describe("ImpactPanel (slice 7)", () => {
         client={client}
       />,
     );
-    await waitFor(() => screen.getByText(/2 subjects transitively impacted/));
+    await waitFor(() => screen.getByText(/1 direct · 2 transitive/));
     expect(
       screen.getByText("arch:container:payment-service"),
     ).toBeInTheDocument();
@@ -108,7 +113,17 @@ describe("ImpactPanel (slice 7)", () => {
           }),
         );
       }
-      return Promise.resolve(jsonResponse(200, { root: "x", impacted: [] }));
+      return Promise.resolve(
+        jsonResponse(200, {
+          root: "x",
+          direct_dependents: [],
+          transitively_impacted: [],
+          affected_tests: [],
+          stale_evidence: [],
+          decisions_potentially_invalidated: [],
+          unknown_impact: [],
+        }),
+      );
     });
     const client = new VistalithClient({
       baseUrl: "http://127.0.0.1:7420",

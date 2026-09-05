@@ -15,6 +15,7 @@ import type {
   GraphPatch,
   GraphState,
   Health,
+  ImpactAnalysis,
   ImpactReport,
   IntentDetail,
   IntentSummary,
@@ -329,6 +330,21 @@ export class VistalithClient {
     const query = kinds ? `?kinds=${enc(kinds.join(","))}` : "";
     return this.getJson<ImpactReport>(
       `/algorithms/impact/${enc(namespace)}/${enc(kind)}/${enc(id)}${query}`,
+    );
+  }
+
+  /**
+   * Full impact analysis (visual/IMPACT.md): direct/transitive dependents,
+   * affected tests, stale evidence, invalidated decisions and explicit
+   * unknown impact.
+   */
+  async impactFull(
+    namespace: string,
+    kind: string,
+    id: string,
+  ): Promise<import("./types.js").ImpactAnalysis> {
+    return this.getJson<import("./types.js").ImpactAnalysis>(
+      `/algorithms/impact/${enc(namespace)}/${enc(kind)}/${enc(id)}?full=true`,
     );
   }
 
