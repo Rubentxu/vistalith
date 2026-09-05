@@ -595,3 +595,26 @@ export interface StreamTurnHandlers {
   }) => void;
   onError?: (message: string) => void;
 }
+
+// --- Decision lens (slice 13, M9) -------------------------------------------------
+
+export interface DecisionAlternative {
+  option: string;
+  via: string;
+}
+
+export interface DecisionEntry {
+  decision: string;
+  question?: string | null;
+  selected?: string | null;
+  rejected: DecisionAlternative[];
+  motivated_by: string[];
+  evidence: string[];
+  contradicts: string[];
+  revisits: string[];
+  deprecated: boolean;
+}
+
+export interface DecisionsLens {
+  decisions: DecisionEntry[];
+}

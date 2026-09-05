@@ -3,6 +3,7 @@ import type {
   AppendedEvent,
   C4View,
   CreateFrameInput,
+  DecisionsLens,
   DraftIntentInput,
   ForkReply,
   ForkThreadInput,
@@ -423,6 +424,11 @@ export class VistalithClient {
     return this.getJson<WhyPath>(
       `/why/${enc(namespace)}/${enc(kind)}/${enc(id)}?depth=${depth}`,
     );
+  }
+
+  /** Decision lens inventory (slice 13, M9). */
+  async decisionsLens(): Promise<DecisionsLens> {
+    return this.getJson<DecisionsLens>("/lens/decisions");
   }
 
   // --- C4 projection (slice 3) ---

@@ -32,6 +32,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 10 | Proyección del workflow SDDK al SWG (M6) + trazabilidad why-path (M9) | hecho |
 | 11 | Turnos en streaming — deltas SSE al chat web, misma durabilidad (SPK-006 parcial) | hecho |
 | 12 | Modelo de servidores MCP completo — health, reconexión automática, re-descubrimiento de tools, enable/disable (SPK-007 parcial) | hecho |
+| 13 | Lente de decisiones — inventario pregunta/opciones/rechazadas/evidencia por decisión (M9, DECISIONS-TIME.md) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -233,6 +234,8 @@ sujetos durables de clase advisory con traza a su trigger vía
 `causation_id`; el replay nunca re-ejecuta los behaviors, así que el replay
 sigue siendo byte-determinista (hito M4).
 
+El cliente web también tiene una lente **Decisions** que renderiza esa
+cadena por decisión (M9: pregunta → elegida → rechazadas → evidencia).
 El chat web muestra los turnos del asistente en vivo (los deltas se renderizan a medida que llegan).
 El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
 (sujetos/aristas, con selector de time travel y diff estructural al ver una

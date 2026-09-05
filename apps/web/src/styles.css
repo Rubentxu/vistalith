@@ -1017,3 +1017,55 @@ code {
   font-size: 0.72rem;
   padding: 0.05rem 0.35rem;
 }
+
+/* --- Decision lens (slice 13) --- */
+
+.decisions-lens-host {
+  overflow-y: auto;
+  max-width: 60rem;
+}
+
+.decisions-panel {
+  padding: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.decisions-panel h3 {
+  margin: 0 0 0.5rem;
+}
+
+.decisions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.decision-entry {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.decision-id {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.decision-facts {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0.3rem 0 0;
+}
+
+.decision-facts dt {
+  float: left;
+  clear: left;
+  width: 9rem;
+  opacity: 0.7;
+}
+
+.decision-facts dd {
+  margin: 0;
+}

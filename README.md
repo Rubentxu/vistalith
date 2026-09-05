@@ -31,6 +31,7 @@ built and changed. The full planning baseline lives in
 | 10 | SDDK workflow projection into the SWG (M6) + why-path traceability (M9) | done |
 | 11 | Streaming turns — SSE deltas to the web chat, identical durability (SPK-006 partial) | done |
 | 12 | MCP server model completion — health, auto-reconnect, tools re-discovery, enable/disable (SPK-007 partial) | done |
+| 13 | Decision lens — question/options/rejected/evidence inventory per decision (M9, DECISIONS-TIME.md) | done |
 
 ## Normative baseline decisions
 
@@ -223,7 +224,11 @@ ledger cycles into the SWG as derived `sddk:workflow:<id>` subjects,
 idempotent by deterministic event ids), and
 `GET /why/{namespace}/{kind}/{id}?depth=` (slice 10 / M9: the why-path —
 incoming support links with the evidence backbone —
-`provides_evidence_for` / `verifies` — highlighted). `POST /intents/{id}/promote` takes `approve`
+`provides_evidence_for` / `verifies` — highlighted),
+`GET /lens/decisions` (slice 13: the decision lens — per decision, the
+question, selected option, rejected alternatives, motivating requirement,
+supporting evidence, contradictions and revisits, read from the typed
+relations). `POST /intents/{id}/promote` takes `approve`
 (SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
 --sddk-project`, promotions on SDDK-owned subjects submit a governed
 proposal through the SDDK capability gateway — low risk executes and
@@ -237,6 +242,8 @@ and `missing-evidence-advisory`. Advisories are durable advisory-class
 subjects traced to their trigger via `causation_id`; replay never re-runs
 behaviors, so replay stays byte-deterministic (milestone M4).
 
+The web client also has a **Decisions** lens rendering that chain per
+decision (M9: question → selected → rejected → evidence).
 The web chat streams assistant turns live (deltas render as they arrive).
 The web client has three lenses over the same identities: **Graph**
 (subjects/edges, with a time-travel selector and structural diff when

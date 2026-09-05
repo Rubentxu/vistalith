@@ -11,6 +11,7 @@ mod algorithms;
 mod behavior;
 mod c4;
 mod context;
+mod decisions;
 mod diff;
 mod why;
 mod digest;
@@ -20,6 +21,7 @@ mod projection;
 mod store;
 
 pub use algorithms::{AlgorithmGraph, CycleReport, ImpactReport, PathReport, TopoReport};
+pub use decisions::{DecisionAlternative, DecisionEntry, DecisionsLens, decisions_lens};
 pub use why::{WhyLink, WhyPath, why_path};
 pub use context::{
     ContextExclusion, ContextItem, ContextRequest, ExclusionReason, InclusionReason,

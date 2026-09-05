@@ -22,8 +22,8 @@ use vistalith_agent_runtime::{
 };
 use vistalith_domain::{Namespace, RelationKind, SubjectKind, SubjectRef, VEvent};
 use vistalith_graph::{
-    AlgorithmGraph, ContextRequest, GraphDiff, GraphPatch, GraphStore, PatchOutcome, StoreError,
-    append_and_react, c4_view, canonical_graph_json, why_path,
+    AlgorithmGraph, ContextRequest, DecisionsLens, GraphDiff, GraphPatch, GraphStore,
+    PatchOutcome, StoreError, append_and_react, c4_view, canonical_graph_json, why_path,
 };
 use vistalith_sddk_bridge::SddkBridge;
 
@@ -188,6 +188,7 @@ pub fn router(state: AppState) -> Router {
         .route("/sddk/receipts", get(get_sddk_receipts))
         .route("/sddk/sync", post(post_sddk_sync))
         .route("/why/{namespace}/{kind}/{id}", get(get_why))
+        .route("/lens/decisions", get(get_decisions_lens))
         .layer(cors)
         .with_state(state)
 }
@@ -1225,6 +1226,12 @@ async fn post_frame_close(
             message: format!("unknown frame `{frame}`"),
         })?;
     Ok(Json(frame_summary(node)))
+}
+
+async fn get_decisions_lens(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let lens: DecisionsLens = vistalith_graph::decisions_lens(store.graph());
+    Json(serde_json::to_value(lens).expect("lens serialization"))
 }
 
 async fn post_sddk_sync(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
