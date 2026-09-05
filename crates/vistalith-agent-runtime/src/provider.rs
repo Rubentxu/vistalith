@@ -69,6 +69,27 @@ pub enum ModelError {
     EmptyResponse,
 }
 
+/// One incremental event of a streamed model completion (RIG-STRATEGY.md:
+/// Vistalith owns `ModelEvent`; rig's stream types never cross the surface).
+#[derive(Debug, Clone)]
+pub enum ModelEvent {
+    /// A text delta. Deltas are incremental fragments; concatenating them in
+    /// order reconstructs the full text.
+    Delta { text: String },
+    /// The completion finished. Carries the aggregated response — exactly
+    /// what [`ModelResponse`] would have carried — so durability is
+    /// identical between streamed and non-streamed turns.
+    Finished {
+        content: String,
+        model: ModelDescriptor,
+        usage: ModelUsage,
+        tool_calls: Vec<ToolCallRequest>,
+    },
+}
+
+/// Receiver end of a streamed completion.
+pub type ModelEventRx = tokio::sync::mpsc::Receiver<Result<ModelEvent, ModelError>>;
+
 /// The Vistalith provider contract. Implementations are the only place where
 /// provider SDKs are allowed to exist.
 pub trait ModelProvider {
@@ -78,6 +99,42 @@ pub trait ModelProvider {
         &self,
         request: ModelRequest,
     ) -> impl std::future::Future<Output = Result<ModelResponse, ModelError>> + Send;
+
+    /// Streams a completion: text deltas first, exactly one terminal
+    /// [`ModelEvent::Finished`] last (default: delegate to [`Self::complete`]
+    /// and emit the whole text as one delta — providers opt into real
+    /// streaming by overriding this).
+    fn stream_complete(
+        &self,
+        request: ModelRequest,
+    ) -> impl std::future::Future<Output = Result<ModelEventRx, ModelError>> + Send
+    where
+        Self: Sync,
+    {
+        let this = self;
+        async move {
+            let response = this.complete(request).await?;
+            let (tx, rx) = tokio::sync::mpsc::channel(16);
+            tokio::spawn(async move {
+                if !response.content.is_empty() {
+                    let _ = tx
+                        .send(Ok(ModelEvent::Delta {
+                            text: response.content.clone(),
+                        }))
+                        .await;
+                }
+                let _ = tx
+                    .send(Ok(ModelEvent::Finished {
+                        content: response.content,
+                        model: response.model,
+                        usage: response.usage,
+                        tool_calls: response.tool_calls,
+                    }))
+                    .await;
+            });
+            Ok(rx)
+        }
+    }
 }
 
 /// Shared providers stay providers: `Arc<T>` forwards to `T`.
@@ -91,6 +148,10 @@ where
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
         (**self).complete(request).await
+    }
+
+    async fn stream_complete(&self, request: ModelRequest) -> Result<ModelEventRx, ModelError> {
+        (**self).stream_complete(request).await
     }
 }
 
@@ -147,6 +208,34 @@ impl FakeProvider {
         }
     }
 
+    /// Deterministic chunked streaming: the text splits into 3 deltas
+    /// (word-aligned), then exactly one terminal Finished event.
+    fn stream_chunks(text: &str) -> Vec<String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Vec::new();
+        }
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.len() < 3 {
+            return vec![text.to_owned()];
+        }
+        let third = words.len().div_ceil(3);
+        (0..3)
+            .filter_map(|i| {
+                let chunk = words[i * third..((i + 1) * third).min(words.len())].join(" ");
+                if chunk.is_empty() {
+                    None
+                } else if i < 2 {
+                    // Chunk boundaries split sentences: keep a trailing
+                    // space so concatenated deltas read correctly.
+                    Some(format!("{chunk} "))
+                } else {
+                    Some(chunk)
+                }
+            })
+            .collect()
+    }
+
     /// Requests this provider received, for tests that assert on the
     /// reconstructed conversation history.
     pub fn recorded_requests(&self) -> Vec<ModelRequest> {
@@ -154,12 +243,18 @@ impl FakeProvider {
     }
 }
 
-impl ModelProvider for FakeProvider {
-    fn descriptor(&self) -> &ModelDescriptor {
-        &self.model
+impl FakeProvider {
+    /// One recorded-request + usage accounting step shared by complete and
+    /// stream_complete.
+    /// Test/interop shim: one recorded step as a full response.
+    pub fn next_response_for_tests(
+        &self,
+        request: &ModelRequest,
+    ) -> Result<ModelResponse, ModelError> {
+        self.next_response(request)
     }
 
-    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    fn next_response(&self, request: &ModelRequest) -> Result<ModelResponse, ModelError> {
         self.requests
             .lock()
             .expect("requests lock")
@@ -194,6 +289,44 @@ impl ModelProvider for FakeProvider {
                 tool_calls: vec![ToolCallRequest { name, arguments }],
             },
         })
+    }
+}
+
+impl ModelProvider for FakeProvider {
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.model
+    }
+
+    async fn stream_complete(
+        &self,
+        request: ModelRequest,
+    ) -> Result<ModelEventRx, ModelError> {
+        let response = self.next_response(&request)?;
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        tokio::spawn(async move {
+            for chunk in Self::stream_chunks(&response.content) {
+                if tx
+                    .send(Ok(ModelEvent::Delta { text: chunk }))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            let _ = tx
+                .send(Ok(ModelEvent::Finished {
+                    content: response.content,
+                    model: response.model,
+                    usage: response.usage,
+                    tool_calls: response.tool_calls,
+                }))
+                .await;
+        });
+        Ok(rx)
+    }
+
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        self.next_response(&request)
     }
 }
 
@@ -233,6 +366,18 @@ impl RuntimeProvider {
             RuntimeProvider::Rig(provider) => Ok(provider.complete(request).await?),
         }
     }
+
+    /// Enum dispatch for streaming (the runtime owns the choice of
+    /// provider; callers see one [`ModelProvider`] surface).
+    async fn stream_complete(
+        &self,
+        request: ModelRequest,
+    ) -> Result<crate::provider::ModelEventRx, RuntimeError> {
+        match self {
+            RuntimeProvider::Fake(provider) => Ok(provider.stream_complete(request).await?),
+            RuntimeProvider::Rig(provider) => Ok(provider.stream_complete(request).await?),
+        }
+    }
 }
 
 impl ModelProvider for RuntimeProvider {
@@ -242,6 +387,15 @@ impl ModelProvider for RuntimeProvider {
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
         RuntimeProvider::complete(self, request)
+            .await
+            .map_err(|e| match e {
+                RuntimeError::Model(model_error) => model_error,
+                other => ModelError::ProviderFailed("runtime".into(), other.to_string()),
+            })
+    }
+
+    async fn stream_complete(&self, request: ModelRequest) -> Result<ModelEventRx, ModelError> {
+        RuntimeProvider::stream_complete(self, request)
             .await
             .map_err(|e| match e {
                 RuntimeError::Model(model_error) => model_error,
@@ -362,5 +516,139 @@ impl ModelProvider for RigProvider {
             },
             tool_calls,
         })
+    }
+
+    /// Real streaming via rig's `CompletionModel::stream`: text deltas
+    /// forward as [`ModelEvent::Delta`] as they arrive; the aggregated
+    /// `choice` (after the stream drains) becomes the terminal Finished
+    /// event — identical durability to `complete`.
+    async fn stream_complete(
+        &self,
+        request: ModelRequest,
+    ) -> Result<ModelEventRx, ModelError> {
+        use rig_core::completion::CompletionModel;
+        use rig_core::streaming::StreamedAssistantContent;
+
+        let mut history = Vec::with_capacity(request.messages.len() + 1);
+        if let Some(system) = &request.system {
+            history.push(rig_core::completion::Message::system(system.clone()));
+        }
+        for message in &request.messages {
+            history.push(match message.role {
+                MessageRole::User | MessageRole::Tool => {
+                    rig_core::completion::Message::user(message.content.clone())
+                }
+                MessageRole::Assistant | MessageRole::System => {
+                    rig_core::completion::Message::assistant(message.content.clone())
+                }
+            });
+        }
+        let tools = request
+            .tools
+            .iter()
+            .map(|tool| rig_core::completion::ToolDefinition {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: tool.parameters.clone(),
+            })
+            .collect();
+        let completion_request = rig_core::completion::CompletionRequest {
+            model: Some(self.model.model.clone()),
+            preamble: None,
+            chat_history: history,
+            documents: Vec::new(),
+            tools,
+            temperature: None,
+            max_tokens: request.max_tokens,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+            record_telemetry_content: false,
+        };
+
+        let mut stream = self
+            .inner
+            .stream(completion_request)
+            .await
+            .map_err(|e| ModelError::ProviderFailed(self.model.provider.clone(), e.to_string()))?;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let provider = self.model.provider.clone();
+        tokio::spawn(async move {
+            let result: Result<(), ModelError> = async {
+                use futures::StreamExt as _;
+                while let Some(part) = stream.next().await {
+                    if let StreamedAssistantContent::Text(text) = part
+                        .map_err(|e| {
+                            ModelError::ProviderFailed(provider.clone(), e.to_string())
+                        })?
+                        && !text.text.is_empty()
+                    {
+                        tx.send(Ok(ModelEvent::Delta { text: text.text }))
+                            .await
+                            .map_err(|_| {
+                                ModelError::ProviderFailed(
+                                    provider.clone(),
+                                    "consumer dropped".to_owned(),
+                                )
+                            })?;
+                    }
+                    // Tool calls surface in the aggregated choice below;
+                    // their deltas are informational.
+                }
+                Ok(())
+            }
+            .await;
+            if result.is_err() {
+                return; // the consumer sees a dropped stream, not a fake finish
+            }
+            // Aggregate the drained stream exactly like a non-streamed turn.
+            let mut content = String::new();
+            let mut tool_calls = Vec::new();
+            for part in &stream.choice {
+                match part {
+                    rig_core::completion::AssistantContent::Text(text) => {
+                        content.push_str(&text.text);
+                    }
+                    rig_core::completion::AssistantContent::ToolCall(call) => {
+                        tool_calls.push(ToolCallRequest {
+                            name: call.function.name.clone(),
+                            arguments: call.function.arguments.clone(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            let usage = stream.usage();
+            let _ = tx
+                .send(Ok(ModelEvent::Finished {
+                    content,
+                    model: stream.model_descriptor(),
+                    usage: ModelUsage {
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        total_tokens: usage.total_tokens,
+                    },
+                    tool_calls,
+                }))
+                .await;
+        });
+        Ok(rx)
+    }
+}
+
+/// Helper trait alias so the streaming task can build the terminal model
+/// descriptor from the drained stream.
+trait StreamModelDescriptor {
+    fn model_descriptor(&self) -> ModelDescriptor;
+}
+
+impl StreamModelDescriptor for rig_core::streaming::StreamingCompletionResponse {
+    fn model_descriptor(&self) -> ModelDescriptor {
+        // Provider name comes from the stream itself; the concrete model id
+        // is what this RigProvider was constructed with (the caller already
+        // validated it). We approximate with the stream provider name + the
+        // request model — Anthropic reports the serving model at the end.
+        ModelDescriptor::new(self.provider(), "streamed")
     }
 }

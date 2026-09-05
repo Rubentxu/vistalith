@@ -35,8 +35,9 @@ pub use mcp::{
     catalog_id, consequence_from_annotations,
 };
 pub use provider::{
-    ChatMessage, FakeProvider, FakeStep, ModelError, ModelProvider, ModelRequest, ModelResponse,
-    RigProvider, RuntimeError, RuntimeProvider, ToolCallRequest, ToolContract,
+    ChatMessage, FakeProvider, FakeStep, ModelError, ModelEvent, ModelEventRx, ModelProvider,
+    ModelRequest, ModelResponse, RigProvider, RuntimeError, RuntimeProvider, ToolCallRequest,
+    ToolContract,
 };
 pub use tools::{
     Consequence, Grant, GrantStore, GraphSearchTool, NativeTool, PermissionDecision, ToolDescriptor,

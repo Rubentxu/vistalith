@@ -93,7 +93,30 @@ export function ChatPanel({
       { message: "local", role: "user", content, turn: nextTurn },
     ]);
     try {
-      await client.sendMessage(threadIdOf(activeThread), content);
+      // Streamed turn: deltas render live; the refetch reconciles with the
+      // durable state.
+      await client.sendMessageStream(threadIdOf(activeThread), content, {
+        onDelta: (delta) => {
+          setMessages((current) => {
+            const last = current.at(-1);
+            if (last && last.message === "streaming") {
+              return [
+                ...current.slice(0, -1),
+                { ...last, content: last.content + delta },
+              ];
+            }
+            return [
+              ...current,
+              {
+                message: "streaming",
+                role: "assistant",
+                content: delta,
+                turn: nextTurn,
+              },
+            ];
+          });
+        },
+      });
       onGraphChanged?.();
       const view = await client.thread(threadIdOf(activeThread));
       setMessages(view.messages);

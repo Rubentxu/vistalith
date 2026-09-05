@@ -575,3 +575,22 @@ export interface WhyPath {
   evidence: WhyLink[];
   max_depth_reached: number;
 }
+
+// --- Streaming turns (slice 11) --------------------------------------------------
+
+export interface StreamTurnHandlers {
+  /** Called per text delta as the model streams. */
+  onDelta?: (text: string) => void;
+  /** Called once with the durable turn coordinates. */
+  onDone?: (reply: {
+    turn: number;
+    message: string;
+    content: string;
+    usage: {
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+    };
+  }) => void;
+  onError?: (message: string) => void;
+}

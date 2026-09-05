@@ -171,6 +171,7 @@ pub fn router(state: AppState) -> Router {
         .route("/threads", get(get_threads).post(post_thread))
         .route("/threads/{id}", get(get_thread))
         .route("/threads/{id}/messages", post(post_thread_message))
+        .route("/threads/{id}/messages/stream", post(post_thread_message_stream))
         .route("/intents", get(get_intents).post(post_intent))
         .route("/intents/{id}", get(get_intent))
         .route("/intents/{id}/promote", post(promote_intent))
@@ -501,7 +502,110 @@ async fn post_thread_message(
     })))
 }
 
-// --- Fork / diff / time travel (slice 5, SPEC-011) --------------------------
+/// POST /threads/{id}/messages/stream — Server-Sent Events turn:
+/// `event: delta` {text} as the model streams, then
+/// `event: done` {turn, message, content, usage}. Durability is identical
+/// to the non-streamed endpoint: events append at the same points.
+/// POST /threads/{id}/messages/stream — Server-Sent Events turn:
+/// `event: delta` {text} frames as the model streams, then a terminal
+/// `event: done` (or `event: error`) frame. Durability is identical to the
+/// non-streamed endpoint: the same events append at the same points.
+async fn post_thread_message_stream(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, ApiError> {
+    let thread = parse_thread(&id)?;
+    let content = body
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `content` string".to_owned()))?
+        .to_owned();
+
+    // Fail fast (unknown thread) before the stream opens.
+    {
+        let store = state.store.read().await;
+        if store.graph().subject(&thread).is_none() {
+            return Err(ApiError {
+                status: StatusCode::NOT_FOUND,
+                message: format!("unknown thread `{thread}`"),
+            });
+        }
+    }
+
+    let (frame_tx, frame_rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(32);
+    let store = StdArc::clone(&state.store);
+    let engine = state.engine();
+
+    // The turn runs on its own task (it holds the write guard for the whole
+    // streamed turn) and hands deltas to a forwarder, so SSE frames flow
+    // while the model streams.
+    let (deltas_tx, mut deltas_rx) = tokio::sync::mpsc::channel::<String>(16);
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel::<
+        Result<vistalith_agent_runtime::ThreadReply, String>,
+    >();
+    let turn_thread = thread.clone();
+    tokio::spawn(async move {
+        let mut store = store.write().await;
+        let result = engine
+            .send_user_message_streaming(&mut store, &turn_thread, content, deltas_tx)
+            .await;
+        let _ = result_tx.send(result.map_err(|e| e.to_string()));
+    });
+
+    // Forwarder: deltas live; the terminal frame comes after the deltas
+    // channel closes (the turn returned).
+    let forwarder_tx = frame_tx.clone();
+    tokio::spawn(async move {
+        while let Some(delta) = deltas_rx.recv().await {
+            let frame = format!("event: delta\ndata: {}\n\n", sse_data(&delta));
+            if forwarder_tx.send(Ok(frame)).await.is_err() {
+                return; // client disconnected
+            }
+        }
+        let frame = match result_rx.await {
+            Ok(Ok(reply)) => format!(
+                "event: done\ndata: {}\n\n",
+                sse_data(
+                    &serde_json::to_string(&serde_json::json!({
+                        "turn": reply.turn,
+                        "message": reply.message.to_string(),
+                        "content": reply.content,
+                        "usage": {
+                            "input_tokens": reply.usage.input_tokens,
+                            "output_tokens": reply.usage.output_tokens,
+                            "total_tokens": reply.usage.total_tokens,
+                        },
+                    }))
+                    .expect("done frame serialization")
+                )
+            ),
+            Ok(Err(err)) => format!(
+                "event: error\ndata: {}\n\n",
+                sse_data(&serde_json::json!(err).to_string())
+            ),
+            Err(_) => "event: error\ndata: turn task dropped\n\n".to_owned(),
+        };
+        let _ = forwarder_tx.send(Ok(frame)).await;
+    });
+
+    let stream = futures::stream::unfold(frame_rx, |mut rx| async move {
+        rx.recv().await.map(|frame| (frame, rx))
+    });
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response())
+}
+
+/// SSE data frames cannot contain raw newlines; escape them and let the
+/// client unescape.
+fn sse_data(raw: &str) -> String {
+    raw.replace('\n', "\\n").replace('\r', "\\r")
+}
+
+// --- Fork / diff / time travel (slice 5, SPEC-011) --------------------------// --- Fork / diff / time travel (slice 5, SPEC-011) --------------------------
 
 async fn post_thread_fork(
     State(state): State<AppState>,

@@ -30,6 +30,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 8 | Frames — contextos de ejecución acotados — más agentes Vistalith y delegación (`PATTERNS-VIEWS-FRAMES.md`, `AGENTS-DELEGATION.md`) | hecho |
 | 9 | Puente de promoción gobernada a SDDK — intents sobre sujetos SDDK pasan por el gateway de capacidades de SDDK, receipts durables (SPK-012, M7) | hecho |
 | 10 | Proyección del workflow SDDK al SWG (M6) + trazabilidad why-path (M9) | hecho |
+| 11 | Turnos en streaming — deltas SSE al chat web, misma durabilidad (SPK-006 parcial) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -115,6 +116,11 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    como sujetos derivados `sddk:workflow:<id>` (idempotente, ids de evento
    deterministas), y el why-path solo sigue aristas de soporte entrantes —
    ninguno escribe nunca estado SDDK.
+12. El streaming es solo transporte (SPK-006): los deltas pueden llegar a la
+   UI a medida que se generan, pero la durabilidad nunca cambia — los
+   mismos eventos se añaden en los mismos puntos, y el evento terminal del
+   stream lleva la respuesta agregada exactamente igual que una
+   finalización no streaming.
 
 ## Estructura del repositorio
 
@@ -186,6 +192,9 @@ grafo), `GET /subjects`, `GET /subjects/{namespace}/{kind}/{id}`,
 `GET|POST /events`, `POST /patches` (aplicado → `200`, rechazado → `409`;
 los rechazos son eventos durables), `POST|GET /threads`, `GET /threads/{id}`,
 `POST /threads/{id}/messages` (un turno de proveedor por mensaje),
+`POST /threads/{id}/messages/stream` (el mismo turno sobre Server-Sent
+Events: frames `delta` mientras el modelo genera, y un frame terminal
+`done` con las coordenadas durables),
 `POST /threads/{id}/fork` (SPEC-011: copia items hasta un turno con bindings
 `forked_of` y enlaza el fork con `forked_from`),
 `POST|GET /intents`, `GET /intents/{id}`, `POST /intents/{id}/promote`,
@@ -223,6 +232,7 @@ sujetos durables de clase advisory con traza a su trigger vía
 `causation_id`; el replay nunca re-ejecuta los behaviors, así que el replay
 sigue siendo byte-determinista (hito M4).
 
+El chat web muestra los turnos del asistente en vivo (los deltas se renderizan a medida que llegan).
 El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
 (sujetos/aristas, con selector de time travel y diff estructural al ver una
 revisión pasada), **C4** (vista proyectada) y **Chat** (hilos, con acción de

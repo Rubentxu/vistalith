@@ -78,6 +78,18 @@ describe("C4ViewPanel", () => {
 describe("ChatPanel", () => {
   type Handler = [string, unknown] | [string, unknown, number];
 
+  function sseBody(frames: string[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    return new ReadableStream({
+      start(controller) {
+        for (const frame of frames) {
+          controller.enqueue(encoder.encode(frame));
+        }
+        controller.close();
+      },
+    });
+  }
+
   function chatClient(handlers: Handler[]): VistalithClient {
     const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input)).pathname;
@@ -91,6 +103,13 @@ describe("ChatPanel", () => {
       void prefix;
       const payload =
         typeof body === "function" ? (body as () => unknown)() : body;
+      // SSE frames (arrays) stream through a ReadableStream body.
+      if (Array.isArray(payload)) {
+        return Promise.resolve({
+          status,
+          body: sseBody(payload as string[]),
+        } as unknown as Response);
+      }
       return Promise.resolve(jsonResponse(status, payload));
     });
     return new VistalithClient({
@@ -116,6 +135,30 @@ describe("ChatPanel", () => {
       ],
       ["POST /threads", { thread: "agentic:thread:t1" }, 201],
       ["GET /threads/t1", () => threadView],
+      [
+        "POST /threads/t1/messages/stream",
+        () => {
+          // Server-side state advances durably (the streamed turn appends
+          // the same events), so the refetched view includes turn 2.
+          threadView = {
+            thread: { thread: "agentic:thread:t1", title: "chat x", turns: 2 },
+            messages: [
+              ...threadView.messages,
+              { message: "m3", role: "user", content: "hello again", turn: 2 },
+              { message: "m4", role: "assistant", content: "answer", turn: 2 },
+            ],
+          };
+          return [
+            "event: delta\ndata: answer\n\n",
+            `event: done\ndata: ${JSON.stringify({
+              turn: 2,
+              message: "agentic:message:m4",
+              content: "answer",
+              usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+            })}\n\n`,
+          ];
+        },
+      ],
       [
         "POST /threads/t1/messages",
         () => {

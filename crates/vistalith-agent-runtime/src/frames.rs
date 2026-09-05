@@ -244,7 +244,7 @@ pub fn frame_system_prompt(store: &GraphStore, frame: &SubjectRef) -> Result<Str
 /// and [`frame_system_prompt`]. Guards run before the turn; budgets close
 /// the frame automatically after it.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_frame_turn<P: ModelProvider>(
+pub async fn run_frame_turn<P: ModelProvider + Sync>(
     store: &mut GraphStore,
     frame: &SubjectRef,
     engine: &ConversationEngine<P>,

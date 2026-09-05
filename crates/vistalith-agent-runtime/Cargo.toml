@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 time = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
+futures = { workspace = true }
 
 [[bin]]
 name = "mcp-echo"

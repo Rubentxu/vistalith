@@ -66,6 +66,8 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 time = { version = "0.3", features = ["formatting", "parsing", "serde", "serde-well-known", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+futures = "0.3"
+tokio-stream = "0.1"
 axum = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

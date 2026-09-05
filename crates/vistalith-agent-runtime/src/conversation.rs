@@ -51,14 +51,14 @@ pub struct ForkedThread {
     pub copied_events: usize,
 }
 
-pub struct ConversationEngine<P: ModelProvider> {
+pub struct ConversationEngine<P: ModelProvider + Sync> {
     provider: P,
     system: Option<String>,
     actor: Actor,
     tools: Option<ToolRegistry>,
 }
 
-impl<P: ModelProvider> ConversationEngine<P> {
+impl<P: ModelProvider + Sync> ConversationEngine<P> {
     pub fn new(provider: P) -> Self {
         ConversationEngine {
             provider,
@@ -177,6 +177,104 @@ impl<P: ModelProvider> ConversationEngine<P> {
                 message: assistant_message,
                 turn,
                 content: response.content,
+                model,
+                usage: total_usage,
+            });
+        }
+    }
+
+    /// Streams a turn: identical durability to [`Self::send_user_message`]
+    /// (the same durable events, appended at the same points), but the final
+    /// model completion is streamed and text deltas are forwarded through
+    /// `deltas` as they arrive. Tool rounds still run non-streamed first.
+    pub async fn send_user_message_streaming(
+        &self,
+        store: &mut GraphStore,
+        thread: &SubjectRef,
+        content: impl Into<String>,
+        deltas: tokio::sync::mpsc::Sender<String>,
+    ) -> Result<ThreadReply, ConversationError> {
+        let content = content.into();
+        if content.trim().is_empty() {
+            return Err(ConversationError::EmptyMessage);
+        }
+        if store.graph().subject(thread).is_none() {
+            return Err(ConversationError::UnknownThread(thread.to_string()));
+        }
+
+        let turn = next_turn(store, thread);
+        self.append_message(store, thread, MessageRole::User, &content, turn)?;
+
+        let mut rounds = 0usize;
+        let mut total_usage = vistalith_domain::ModelUsage::default();
+        loop {
+            // Every round streams: deltas forward live; the terminal event
+            // decides between a final answer and tool calls (which run and
+            // loop, exactly like the non-streamed path).
+            let request = self.build_request(store, thread);
+            let mut events = self.provider.stream_complete(request).await?;
+            let mut finished: Option<(
+                String,
+                vistalith_domain::ModelDescriptor,
+                vistalith_domain::ModelUsage,
+                Vec<crate::provider::ToolCallRequest>,
+            )> = None;
+            let mut tool_round_ran = false;
+            while let Some(event) = events.recv().await {
+                match event? {
+                    crate::provider::ModelEvent::Delta { text } => {
+                        let _ = deltas.send(text).await;
+                    }
+                    crate::provider::ModelEvent::Finished {
+                        content,
+                        model,
+                        usage,
+                        tool_calls,
+                    } => {
+                        total_usage.input_tokens += usage.input_tokens;
+                        total_usage.output_tokens += usage.output_tokens;
+                        total_usage.total_tokens += usage.total_tokens;
+                        if !tool_calls.is_empty() && rounds < MAX_TOOL_ROUNDS {
+                            rounds += 1;
+                            tool_round_ran = true;
+                            self.run_tool_calls(store, thread, turn, &tool_calls).await?;
+                        } else {
+                            finished = Some((content, model, usage, tool_calls));
+                        }
+                    }
+                }
+                if finished.is_some() {
+                    break;
+                }
+            }
+            if tool_round_ran {
+                // Tool outputs went back to the model: stream the next round.
+                continue;
+            }
+            // Usage was already accumulated from the terminal event above.
+            let Some((content, model, _, _)) = finished else {
+                return Err(ConversationError::Model(
+                    crate::provider::ModelError::EmptyResponse,
+                ));
+            };
+
+            let assistant_message =
+                self.append_message(store, thread, MessageRole::Assistant, &content, turn)?;
+            store.append(self.event(
+                EventPayload::TurnCompleted(TurnCompleted {
+                    thread: thread.clone(),
+                    turn,
+                    model: model.clone(),
+                    usage: total_usage,
+                }),
+                vec![thread.clone()],
+            ))?;
+
+            return Ok(ThreadReply {
+                thread: thread.clone(),
+                message: assistant_message,
+                turn,
+                content,
                 model,
                 usage: total_usage,
             });

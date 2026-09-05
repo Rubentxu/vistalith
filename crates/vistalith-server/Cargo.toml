@@ -15,6 +15,8 @@ vistalith-domain = { workspace = true }
 vistalith-graph = { workspace = true }
 vistalith-agent-runtime = { workspace = true }
 vistalith-sddk-bridge = { workspace = true }
+futures = { workspace = true }
+tokio-stream = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 tower-http = { version = "0.6", features = ["cors"] }

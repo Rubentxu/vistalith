@@ -156,6 +156,62 @@ export class VistalithClient {
     );
   }
 
+  /**
+   * Streams a turn over SSE (slice 11): `onDelta` fires per text fragment
+   * as the model streams; `onDone` fires once with the durable turn
+   * coordinates. Resolves when the stream closes.
+   */
+  async sendMessageStream(
+    id: string,
+    content: string,
+    handlers: import("./types.js").StreamTurnHandlers = {},
+  ): Promise<void> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/threads/${enc(id)}/messages/stream`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content }),
+      },
+    );
+    if (!response.body) {
+      throw new ApiError(response.status, "response has no body");
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const emitFrame = (frame: string): void => {
+      const lines = frame.split("\n");
+      const event = lines[0]?.replace(/^event: /, "") ?? "";
+      const data = lines
+        .slice(1)
+        .filter((l) => l.startsWith("data: "))
+        .map((l) => l.slice(6))
+        .join("\n");
+      const unescaped = data.replaceAll("\\n", "\n");
+      if (event === "delta" && handlers.onDelta) {
+        handlers.onDelta(unescaped);
+      } else if (event === "done" && handlers.onDone) {
+        handlers.onDone(JSON.parse(unescaped));
+      } else if (event === "error" && handlers.onError) {
+        handlers.onError(unescaped);
+      }
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let separator = buffer.indexOf("\n\n");
+      while (separator !== -1) {
+        const frame = buffer.slice(0, separator);
+        buffer = buffer.slice(separator + 2);
+        if (frame.trim().length > 0) emitFrame(frame);
+        separator = buffer.indexOf("\n\n");
+      }
+    }
+    if (buffer.trim().length > 0) emitFrame(buffer.trim());
+  }
+
   // --- Fork / diff / time travel (slice 5, SPEC-011) ---
 
   /**

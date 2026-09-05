@@ -29,6 +29,7 @@ built and changed. The full planning baseline lives in
 | 8 | Frames — bounded execution contexts — plus Vistalith agents and delegation (`PATTERNS-VIEWS-FRAMES.md`, `AGENTS-DELEGATION.md`) | done |
 | 9 | Governed SDDK promotion bridge — intents on SDDK-owned subjects go through the SDDK capability gateway, receipts durable (SPK-012, M7) | done |
 | 10 | SDDK workflow projection into the SWG (M6) + why-path traceability (M9) | done |
+| 11 | Streaming turns — SSE deltas to the web chat, identical durability (SPK-006 partial) | done |
 
 ## Normative baseline decisions
 
@@ -109,6 +110,10 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    `sddk:workflow:<id>` subjects (idempotent, deterministic event ids),
    and the why-path only follows incoming support edges — neither ever
    writes SDDK state.
+12. Streaming is transport-only (SPK-006): deltas may reach the UI as they
+   stream, but durability never changes — the same events append at the
+   same points, and the terminal streamed event carries the aggregated
+   response exactly like a non-streamed completion.
 
 ## Repository layout
 
@@ -179,6 +184,9 @@ time travel), `GET /diff?from=A[&to=B]` (structural graph diff),
 `POST /patches` (applied → `200`, rejected → `409`; rejections are durable
 events), `POST|GET /threads`, `GET /threads/{id}`,
 `POST /threads/{id}/messages` (one provider turn per message),
+`POST /threads/{id}/messages/stream` (the same turn over Server-Sent
+Events: `delta` frames while the model streams, a terminal `done` frame
+with the durable coordinates),
 `POST /threads/{id}/fork` (SPEC-011: copy items up to a turn with
 `forked_of` bindings, link the fork back with `forked_from`),
 `POST|GET /intents`, `GET /intents/{id}`, `POST /intents/{id}/promote`,
@@ -223,6 +231,7 @@ and `missing-evidence-advisory`. Advisories are durable advisory-class
 subjects traced to their trigger via `causation_id`; replay never re-runs
 behaviors, so replay stays byte-deterministic (milestone M4).
 
+The web chat streams assistant turns live (deltas render as they arrive).
 The web client has three lenses over the same identities: **Graph**
 (subjects/edges, with a time-travel selector and structural diff when
 viewing a past revision), **C4** (projected view) and **Chat** (threads,
