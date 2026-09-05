@@ -247,3 +247,69 @@ async fn unknown_frame_subjects_are_rejected() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(err["error"].as_str().unwrap().contains("ghost"));
 }
+
+// --- UAT checks + lens (slice 15, UAT-STUDIO.md) ------------------------------
+
+#[tokio::test]
+async fn uat_scenario_checks_are_durable_and_inventoried() {
+    let app = fixture_app();
+
+    // Define a scenario subject (derived: it would be projected from SDDK).
+    let scenario_json = r#"{
+        "event_id": "0198f6c0-0000-7000-8000-00000000u001",
+        "actor": "observation:sddk",
+        "timestamp": "2026-09-05T12:00:00Z",
+        "subjects": [],
+        "correlation_id": "0198f6c0-0000-7000-8000-00000000u001",
+        "type": "subject-defined",
+        "payload": {
+            "subject": { "namespace": "verification", "kind": "uat-scenario", "id": "uat-1" },
+            "authority": "derived",
+            "provenance": { "source": "observation:sddk" },
+            "properties": { "title": "payment flow signoff" }
+        }
+    }"#;
+    // event ids must be valid uuids
+    let scenario_json = scenario_json.replace("0198f6c0-0000-7000-8000-00000000u001", "0198f6c0-7700-7000-8000-000000000001");
+    let (status, _) = call(
+        app.clone(),
+        Request::post("/events")
+            .header("content-type", "application/json")
+            .body(Body::from(scenario_json))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Record a failing check, then a passing one.
+    for (verdict, note) in [("fail", "payment declined"), ("pass", "retested OK")] {
+        let (status, body) = call(
+            app.clone(),
+            Request::post("/uat/checks")
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                r#"{{ "scenario": "verification:uat-scenario:uat-1", "verdict": "{verdict}", "note": "{note}" }}"#
+            )))
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "body: {body}");
+        assert_eq!(body["verdict"], serde_json::json!(verdict));
+    }
+
+    // The lens inventories the scenario with its checks and latest verdict.
+    let (_, lens) = call(
+        app,
+        Request::get("/lens/uat").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let scenarios = lens["scenarios"].as_array().unwrap();
+    assert_eq!(scenarios.len(), 1);
+    let scenario = &scenarios[0];
+    assert_eq!(scenario["title"], serde_json::json!("payment flow signoff"));
+    assert_eq!(scenario["latest_verdict"], "pass");
+    let checks = scenario["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 2);
+    assert_eq!(checks[0]["verdict"], "fail");
+    assert_eq!(checks[1]["verdict"], "pass");
+}

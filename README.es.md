@@ -34,6 +34,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 12 | Modelo de servidores MCP completo — health, reconexión automática, re-descubrimiento de tools, enable/disable (SPK-007 parcial) | hecho |
 | 13 | Lente de decisiones — inventario pregunta/opciones/rechazadas/evidencia por decisión (M9, DECISIONS-TIME.md) | hecho |
 | 14 | Pull-up de innovaciones — evaluación focus-test + envío gobernado a SDDK (M10, INNOVATION-PULL-UP.md) | hecho |
+| 15 | Checks de UAT — registros durables pass/fail/blocked por escenario con inventario en lente (UAT-STUDIO.md) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -124,6 +125,12 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    mismos eventos se añaden en los mismos puntos, y el evento terminal del
    stream lleva la respuesta agregada exactamente igual que una
    finalización no streaming.
+13. Los checks de UAT (UAT-STUDIO.md) son hechos durables de Vistalith
+   sobre un escenario: veredicto (pass/fail/blocked), referencia de
+   evidencia y nota opcionales, inventariados por escenario con el último
+   veredicto. La GUI nunca define un ciclo de vida UAT paralelo — donde el
+   escenario esté gobernado por SDDK, la semántica de SDDK sigue siendo
+   autoridad.
 
 ## Estructura del repositorio
 

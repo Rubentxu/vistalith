@@ -618,3 +618,30 @@ export interface DecisionEntry {
 export interface DecisionsLens {
   decisions: DecisionEntry[];
 }
+
+// --- UAT checks + lens (slice 15) -------------------------------------------------
+
+export type UatVerdict = "pass" | "fail" | "blocked";
+
+export interface RecordUatCheckInput {
+  scenario: string;
+  verdict: UatVerdict;
+  evidence_ref?: string;
+  note?: string;
+  actor?: string;
+}
+
+export interface UatCheck {
+  check: string;
+  verdict: UatVerdict;
+  note?: string | null;
+  evidence_ref?: string | null;
+}
+
+export interface UatScenarioView {
+  scenario: string;
+  title: string;
+  status: string;
+  latest_verdict: string;
+  checks: UatCheck[];
+}

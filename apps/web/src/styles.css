@@ -1069,3 +1069,23 @@ code {
 .decision-facts dd {
   margin: 0;
 }
+
+/* --- UAT panel (slice 15) --- */
+
+.uat-panel {
+  border-top: 1px solid var(--border);
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+}
+
+.uat-panel h3 {
+  margin: 0 0 0.4rem;
+}
+
+.uat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}

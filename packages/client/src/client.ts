@@ -22,6 +22,7 @@ import type {
   McpServerInfo,
   PatchOutcome,
   PromotionOutcome,
+  RecordUatCheckInput,
   SemanticContextView,
   StoredEvent,
   SubjectNode,
@@ -31,6 +32,7 @@ import type {
   ThreadSummary,
   ThreadView,
   ToolsCatalog,
+  UatScenarioView,
   VEvent,
   WhyPath,
 } from "./types.js";
@@ -429,6 +431,27 @@ export class VistalithClient {
   /** Decision lens inventory (slice 13, M9). */
   async decisionsLens(): Promise<DecisionsLens> {
     return this.getJson<DecisionsLens>("/lens/decisions");
+  }
+
+  // --- UAT checks + lens (slice 15, UAT-STUDIO.md) ---
+
+  /** Records a UAT check (pass/fail/blocked) against a scenario. */
+  async recordUatCheck(
+    input: RecordUatCheckInput,
+  ): Promise<{ check: string; verdict: string }> {
+    return this.postJson<{ check: string; verdict: string }>(
+      "/uat/checks",
+      input,
+      {
+        okStatus: 201,
+        throwOnError: true,
+      },
+    );
+  }
+
+  /** UAT inventory: per-scenario checks with latest verdicts. */
+  async uatLens(): Promise<{ scenarios: UatScenarioView[] }> {
+    return this.getJson<{ scenarios: UatScenarioView[] }>("/lens/uat");
   }
 
   // --- C4 projection (slice 3) ---

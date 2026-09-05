@@ -1,4 +1,8 @@
-import type { DecisionsLens, VistalithClient } from "@vistalith/client";
+import type {
+  DecisionsLens,
+  UatScenarioView,
+  VistalithClient,
+} from "@vistalith/client";
 import { useCallback, useEffect, useState } from "react";
 import { client as defaultClient } from "../api.ts";
 
@@ -14,11 +18,13 @@ export function DecisionLensPanel({
   client?: VistalithClient;
 }) {
   const [lens, setLens] = useState<DecisionsLens | null>(null);
+  const [uat, setUat] = useState<UatScenarioView[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
       setLens(await client.decisionsLens());
+      setUat((await client.uatLens()).scenarios);
     } catch (err) {
       setError(String(err));
     }
@@ -106,6 +112,31 @@ export function DecisionLensPanel({
         ) : null}
         {!lens ? <li className="empty">loading decisions…</li> : null}
       </ul>
+
+      {uat.length > 0 ? (
+        <div className="uat-panel" data-testid="uat-panel">
+          <h3>uat</h3>
+          <ul className="uat-list">
+            {uat.map((scenario) => (
+              <li key={scenario.scenario}>
+                <code>{scenario.title || scenario.scenario}</code>
+                <span
+                  className={`badge ${
+                    scenario.latest_verdict === "pass"
+                      ? "badge-live"
+                      : scenario.latest_verdict === "fail"
+                        ? "badge-deprecated"
+                        : "badge-advisory"
+                  }`}
+                >
+                  {scenario.latest_verdict} · {scenario.checks.length} check
+                  {scenario.checks.length === 1 ? "" : "s"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

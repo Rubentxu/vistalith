@@ -66,6 +66,10 @@ pub enum EventPayload {
     /// (SPK-012): the decision and the SDDK receipt are durable here, so the
     /// promotion is traceable end to end (milestone M7).
     SddkProposalSubmitted(SddkProposalSubmitted),
+    /// A UAT check was recorded against a scenario (UAT-STUDIO.md): verdict,
+    /// optional evidence reference and notes — graph traceability to the
+    /// scenario/work item without defining a parallel UAT lifecycle.
+    UatCheckRecorded(UatCheckRecorded),
     /// A frame started (`graph/PATTERNS-VIEWS-FRAMES.md`): a bounded
     /// execution context — goal, subjects, permitted tools, budgets.
     FrameStarted(FrameStarted),
@@ -165,6 +169,33 @@ pub struct ToolInvoked {
     /// fork (SPEC-011 binding preservation). Absent on live calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_of: Option<SubjectRef>,
+}
+
+/// A recorded UAT check (UAT-STUDIO.md). The check is a Vistalith-owned
+/// human verification fact about a scenario; SDDK UAT semantics remain
+/// authoritative wherever the scenario is SDDK-governed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UatCheckRecorded {
+    /// The human-check subject this event creates.
+    pub check: SubjectRef,
+    /// The UAT scenario being verified.
+    pub scenario: SubjectRef,
+    /// pass | fail | blocked.
+    pub verdict: UatVerdict,
+    /// Evidence reference (artifact id, digest or URI) when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Verdict of a UAT check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UatVerdict {
+    Pass,
+    Fail,
+    Blocked,
 }
 
 /// A governed SDDK proposal (SPK-012 / milestone M7). The proposal subject
@@ -380,6 +411,7 @@ impl VEvent {
             EventPayload::AdvisoryRaised(_) => "advisory-raised",
             EventPayload::AgentDefined(_) => "agent-defined",
             EventPayload::SddkProposalSubmitted(_) => "sddk-proposal-submitted",
+            EventPayload::UatCheckRecorded(_) => "uat-check-recorded",
             EventPayload::FrameStarted(_) => "frame-started",
             EventPayload::FrameTurnCompleted(_) => "frame-turn-completed",
             EventPayload::FrameClosed(_) => "frame-closed",

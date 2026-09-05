@@ -33,6 +33,7 @@ built and changed. The full planning baseline lives in
 | 12 | MCP server model completion — health, auto-reconnect, tools re-discovery, enable/disable (SPK-007 partial) | done |
 | 13 | Decision lens — question/options/rejected/evidence inventory per decision (M9, DECISIONS-TIME.md) | done |
 | 14 | Innovation pull-up — focus-test evaluation + governed submission to SDDK (M10, INNOVATION-PULL-UP.md) | done |
+| 15 | UAT checks — durable pass/fail/blocked records per scenario with lens inventory (UAT-STUDIO.md) | done |
 
 ## Normative baseline decisions
 
@@ -117,6 +118,11 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    stream, but durability never changes — the same events append at the
    same points, and the terminal streamed event carries the aggregated
    response exactly like a non-streamed completion.
+13. UAT checks (UAT-STUDIO.md) are durable Vistalith facts about a
+   scenario: verdict (pass/fail/blocked), optional evidence reference and
+   note, inventoried per scenario with the latest verdict. The GUI never
+   defines a parallel UAT lifecycle — where the scenario is
+   SDDK-governed, SDDK semantics remain authoritative.
 
 ## Repository layout
 
@@ -234,7 +240,9 @@ relations),
 against the SDDK focus test — gui/llm-free, semantic relevance, no
 duplicated authority, deterministic — classify it deterministically
 (VISTALITH_ONLY → SDDK_PROPOSAL) and, for proposals, submit it as governed
-evidence through the SDDK capability gateway). `POST /intents/{id}/promote` takes `approve`
+evidence through the SDDK capability gateway),
+`POST /uat/checks` + `GET /lens/uat` (slice 15: durable UAT checks per
+scenario with the latest verdict). `POST /intents/{id}/promote` takes `approve`
 (SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
 --sddk-project`, promotions on SDDK-owned subjects submit a governed
 proposal through the SDDK capability gateway — low risk executes and

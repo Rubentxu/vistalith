@@ -20,7 +20,9 @@ use vistalith_agent_runtime::{
     GrantStore, McpManager, McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
     close_frame, frame_system_prompt, promote_intent_with_bridge, run_frame_turn, start_frame,
 };
-use vistalith_domain::{Namespace, RelationKind, SubjectKind, SubjectRef, VEvent};
+use vistalith_domain::{
+    Namespace, RelationKind, SubjectKind, SubjectRef, UatCheckRecorded, UatVerdict, VEvent,
+};
 use vistalith_graph::{
     AlgorithmGraph, ContextRequest, DecisionsLens, GraphDiff, GraphPatch, GraphStore,
     PatchOutcome, StoreError, append_and_react, c4_view, canonical_graph_json, why_path,
@@ -192,6 +194,8 @@ pub fn router(state: AppState) -> Router {
         .route("/sddk/sync", post(post_sddk_sync))
         .route("/why/{namespace}/{kind}/{id}", get(get_why))
         .route("/lens/decisions", get(get_decisions_lens))
+        .route("/uat/checks", post(post_uat_check))
+        .route("/lens/uat", get(get_uat_lens))
         .layer(cors)
         .with_state(state)
 }
@@ -1229,6 +1233,119 @@ async fn post_frame_close(
             message: format!("unknown frame `{frame}`"),
         })?;
     Ok(Json(frame_summary(node)))
+}
+
+async fn post_uat_check(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let scenario = body
+        .get("scenario")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| SubjectRef::parse(raw).ok())
+        .ok_or_else(|| ApiError::bad_request("missing `scenario` identity string".to_owned()))?;
+    let verdict = match body.get("verdict").and_then(|v| v.as_str()) {
+        Some("pass") => UatVerdict::Pass,
+        Some("fail") => UatVerdict::Fail,
+        Some("blocked") => UatVerdict::Blocked,
+        _ => {
+            return Err(ApiError::bad_request(
+                "`verdict` must be pass | fail | blocked".to_owned(),
+            ))
+        }
+    };
+    let evidence_ref = body
+        .get("evidence_ref")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    let note = body
+        .get("note")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    let actor = body
+        .get("actor")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| vistalith_domain::Actor::new(raw).ok())
+        .unwrap_or_else(|| vistalith_domain::Actor::new("user:uat").expect("static actor"));
+
+    let mut store = state.store.write().await;
+    if store.graph().subject(&scenario).is_none() {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown scenario `{scenario}`"),
+        });
+    }
+    let check = SubjectRef::new(
+        Namespace::Verification,
+        SubjectKind::HumanCheck,
+        uuid::Uuid::now_v7().to_string(),
+    )
+    .expect("generated check id is valid");
+    store
+        .append(vistalith_domain::VEvent {
+            event_id: uuid::Uuid::now_v7(),
+            actor,
+            timestamp: time::OffsetDateTime::now_utc(),
+            subjects: vec![check.clone(), scenario.clone()],
+            correlation_id: uuid::Uuid::now_v7(),
+            causation_id: None,
+            trace_id: None,
+            payload: vistalith_domain::EventPayload::UatCheckRecorded(UatCheckRecorded {
+                check: check.clone(),
+                scenario: scenario.clone(),
+                verdict,
+                evidence_ref,
+                note,
+            }),
+        })
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    tracing::info!(scenario = %scenario, verdict = ?verdict, "UAT check recorded");
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "check": check.to_string(), "verdict": verdict })),
+    ))
+}
+
+async fn get_uat_lens(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let mut scenarios: Vec<serde_json::Value> = Vec::new();
+    for node in store.graph().subjects_of_kind(&SubjectKind::UatScenario) {
+        let scenario = node.subject.to_string();
+        let mut checks = Vec::new();
+        let mut latest_verdict = String::from("unverified");
+        for fact in store.graph().outgoing(&node.subject) {
+            if fact.relation.kind != RelationKind::Contains {
+                continue;
+            }
+            let Some(check) = store.graph().subject(&fact.relation.to) else {
+                continue;
+            };
+            if check.subject.kind() != &SubjectKind::HumanCheck {
+                continue;
+            }
+            let verdict = check
+                .properties
+                .get("verdict")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unverified")
+                .to_owned();
+            latest_verdict = verdict.clone();
+            checks.push(serde_json::json!({
+                "check": check.subject.to_string(),
+                "verdict": verdict,
+                "note": check.properties.get("note").cloned(),
+                "evidence_ref": check.properties.get("evidence_ref").cloned(),
+            }));
+        }
+        scenarios.push(serde_json::json!({
+            "scenario": scenario,
+            "title": node.properties.get("title").cloned().unwrap_or(serde_json::json!("")),
+            "status": node.properties.get("status").cloned().unwrap_or(serde_json::json!("unverified")),
+            "latest_verdict": latest_verdict,
+            "checks": checks,
+        }));
+    }
+    Json(serde_json::json!({ "scenarios": scenarios }))
 }
 
 async fn get_decisions_lens(State(state): State<AppState>) -> Json<serde_json::Value> {

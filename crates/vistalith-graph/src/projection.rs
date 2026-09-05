@@ -375,6 +375,59 @@ pub fn apply_event(
                 )));
             }
         }
+        EventPayload::UatCheckRecorded(recorded) => {
+            if graph.node(&recorded.scenario).is_none() {
+                return Err(ProjectionError::UnknownSubject(
+                    recorded.scenario.to_string(),
+                ));
+            }
+            if graph.node(&recorded.check).is_some() {
+                return Err(ProjectionError::DuplicateSubject(
+                    recorded.check.to_string(),
+                ));
+            }
+            let verdict = serde_json::to_value(recorded.verdict)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            let mut properties = thread_properties(&[
+                ("verdict", serde_json::json!(verdict)),
+                ("scenario", serde_json::json!(recorded.scenario.to_string())),
+            ]);
+            if let Some(evidence_ref) = &recorded.evidence_ref {
+                properties
+                    .insert("evidence_ref".to_owned(), serde_json::json!(evidence_ref));
+            }
+            if let Some(note) = &recorded.note {
+                properties.insert("note".to_owned(), serde_json::json!(note));
+            }
+            graph.upsert_subject(
+                recorded.check.clone(),
+                AuthorityClass::Authoritative,
+                event_provenance(event),
+                properties,
+                sequence,
+            );
+            // Traceability: check -[tested_by... actually scenario
+            // -[verified_by]-> check reads backwards; the scenario
+            // -[contains]-> check relation keeps the inventory per scenario.
+            let fact = RelationFact {
+                relation: RelationRef::new(
+                    recorded.scenario.clone(),
+                    RelationKind::Contains,
+                    recorded.check.clone(),
+                )
+                .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                authority: AuthorityClass::Authoritative,
+                provenance: event_provenance(event),
+            };
+            if !graph.declare_relation(fact, sequence) {
+                return Err(ProjectionError::DuplicateRelation(format!(
+                    "{} contains {}",
+                    recorded.scenario, recorded.check
+                )));
+            }
+        }
         EventPayload::AgentDefined(defined) => {
             if graph.node(&defined.agent).is_some() {
                 return Err(ProjectionError::DuplicateSubject(
