@@ -30,6 +30,7 @@ built and changed. The full planning baseline lives in
 | 9 | Governed SDDK promotion bridge — intents on SDDK-owned subjects go through the SDDK capability gateway, receipts durable (SPK-012, M7) | done |
 | 10 | SDDK workflow projection into the SWG (M6) + why-path traceability (M9) | done |
 | 11 | Streaming turns — SSE deltas to the web chat, identical durability (SPK-006 partial) | done |
+| 12 | MCP server model completion — health, auto-reconnect, tools re-discovery, enable/disable (SPK-007 partial) | done |
 
 ## Normative baseline decisions
 
@@ -212,7 +213,12 @@ execution — the frame owns a thread, its `permitted_tools` restrict the
 unified catalog, and its turn/token budgets auto-close it: `completed`,
 `aborted`, `turns-exhausted`, `budget-exhausted`),
 `GET /sddk/receipts` (slice 9: receipts from the SDDK ledger when the
-bridge is configured), `POST /sddk/sync` (slice 10 / M6: project SDDK
+bridge is configured),
+`GET /mcp/servers/{name}/health`, `POST /mcp/servers/{name}/refresh`
+(re-discovery), `POST /mcp/servers/{name}/disable|enable` (slice 12:
+disabled servers keep their registration while their tools leave the
+unified catalog; a call that finds its transport dead reconnects once and
+retries — the child process re-spawns), `POST /sddk/sync` (slice 10 / M6: project SDDK
 ledger cycles into the SWG as derived `sddk:workflow:<id>` subjects,
 idempotent by deterministic event ids), and
 `GET /why/{namespace}/{kind}/{id}?depth=` (slice 10 / M9: the why-path —

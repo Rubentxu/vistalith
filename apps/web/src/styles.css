@@ -987,3 +987,33 @@ code {
   padding: 0.15rem 0.5rem;
   margin-bottom: 0.3rem;
 }
+
+/* --- MCP server controls (slice 12) --- */
+
+.mcp-servers {
+  border-top: 1px solid var(--border);
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+}
+
+.mcp-servers h3 {
+  margin: 0 0 0.4rem;
+}
+
+.mcp-server-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.mcp-server-actions {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.mcp-server-actions button {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.35rem;
+}

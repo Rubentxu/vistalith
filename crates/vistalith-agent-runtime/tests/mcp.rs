@@ -45,7 +45,6 @@ async fn connect_discovers_tools_with_consequence_classification() {
     assert_eq!(echo.descriptor.parameters["type"], "object");
     assert!(echo.descriptor.parameters["properties"]["message"].is_object());
 
-    connection.shutdown().await;
 }
 
 #[tokio::test]
@@ -106,7 +105,6 @@ async fn unified_catalog_enforces_scoped_grants_on_mcp_tools() {
         PermissionDecision::Deny
     );
 
-    connection.shutdown().await;
 }
 
 #[tokio::test]
@@ -158,7 +156,6 @@ async fn mcp_tool_call_in_a_turn_is_durable_with_its_source() {
         .unwrap()
         .contains("echo: from a turn"));
 
-    connection.shutdown().await;
 }
 
 #[tokio::test]
@@ -173,8 +170,7 @@ async fn manager_registers_and_reports_status() {
     let statuses = manager.status();
     assert_eq!(statuses.len(), 1);
 
-    let connection = manager.take("echo").unwrap();
-    connection.shutdown().await;
+    let _connection = manager.take("echo").unwrap();
 }
 
 #[tokio::test]
@@ -201,4 +197,51 @@ async fn config_validation_rejects_double_or_missing_transports() {
         url: None,
     };
     assert!(McpConnection::connect(bogus).await.is_err());
+}
+
+#[tokio::test]
+async fn transport_death_triggers_reconnect_and_the_call_succeeds() {
+    let connection = Arc::new(McpConnection::connect(echo_config()).await.unwrap());
+    // First call over the original child process.
+    let first = connection
+        .call("echo", serde_json::json!({ "message": "before" }))
+        .await
+        .unwrap();
+    assert_eq!(first["text"], "echo: before");
+
+    // Force the transport closed (what a killed child looks like).
+    connection.reconnect().await.expect("manual reconnect");
+    // The connection still works — the child was re-spawned.
+    let second = connection
+        .call("echo", serde_json::json!({ "message": "after" }))
+        .await
+        .unwrap();
+    assert_eq!(second["text"], "echo: after");
+    // And discovery survived the reconnect (same two tools).
+    assert_eq!(connection.entries().len(), 2);
+}
+
+#[tokio::test]
+async fn refresh_re_discovers_tools() {
+    let connection = Arc::new(McpConnection::connect(echo_config()).await.unwrap());
+    let count = connection.refresh().await.expect("refresh");
+    assert_eq!(count, 2, "mcp-echo advertises two tools");
+    assert_eq!(connection.entries().len(), 2);
+}
+
+#[tokio::test]
+async fn disabled_servers_leave_the_catalog_but_stay_registered() {
+    let manager = McpManager::new();
+    manager.register(echo_config()).await.expect("register");
+    manager.set_disabled("echo", true);
+    assert!(manager.is_disabled("echo"));
+    assert!(
+        manager.connections().is_empty(),
+        "disabled servers' tools stay out of the catalog"
+    );
+    let status = &manager.status()[0];
+    assert!(status.disabled);
+    assert_eq!(status.name, "echo");
+    manager.set_disabled("echo", false);
+    assert_eq!(manager.connections().len(), 1);
 }

@@ -415,6 +415,7 @@ export interface McpServerInfo {
   transport: "stdio" | "http";
   status: "connected" | "unhealthy";
   tools: number;
+  disabled: boolean;
 }
 
 // --- Graph algorithms + semantic context view (SPEC-005, slice 7) --------------

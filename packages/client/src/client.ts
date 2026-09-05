@@ -278,6 +278,42 @@ export class VistalithClient {
     return this.deleteJson<{ removed: string }>(`/mcp/servers/${enc(name)}`);
   }
 
+  /** Liveness of one MCP server (health question, agentic/MCP.md). */
+  async mcpServerHealth(name: string): Promise<McpServerInfo> {
+    return this.getJson<McpServerInfo>(`/mcp/servers/${enc(name)}/health`);
+  }
+
+  /** Re-runs tool discovery (the tools/list_changed question). */
+  async refreshMcpServer(
+    name: string,
+  ): Promise<{ server: string; tools: number }> {
+    return this.postJson<{ server: string; tools: number }>(
+      `/mcp/servers/${enc(name)}/refresh`,
+      {},
+      { okStatus: 200, throwOnError: true },
+    );
+  }
+
+  async disableMcpServer(
+    name: string,
+  ): Promise<{ server: string; disabled: boolean }> {
+    return this.postJson<{ server: string; disabled: boolean }>(
+      `/mcp/servers/${enc(name)}/disable`,
+      {},
+      { okStatus: 200, throwOnError: true },
+    );
+  }
+
+  async enableMcpServer(
+    name: string,
+  ): Promise<{ server: string; disabled: boolean }> {
+    return this.postJson<{ server: string; disabled: boolean }>(
+      `/mcp/servers/${enc(name)}/enable`,
+      {},
+      { okStatus: 200, throwOnError: true },
+    );
+  }
+
   // --- Algorithms + semantic context view (slice 7) ---
 
   /** Transitive dependents of a subject (SPK-004: impact). */

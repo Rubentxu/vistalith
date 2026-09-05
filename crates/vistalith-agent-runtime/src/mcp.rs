@@ -2,17 +2,19 @@
 //!
 //! Vistalith is an MCP *client*: it connects to external tool servers over
 //! stdio (child process) or Streamable HTTP through the official Rust SDK
-//! (`rmcp`, direct — no façade), discovers their tools once at connect time,
-//! and projects them into the unified tool catalog (`crate::tools`) where
-//! Vistalith permissions apply to every call. Credentials never cross the
-//! client boundary into any renderer (SPEC-008).
+//! (`rmcp`, direct — no façade), discovers their tools, and projects them
+//! into the unified tool catalog (`crate::tools`) where Vistalith
+//! permissions apply to every call. Credentials never cross the client
+//! boundary into any renderer (SPEC-008).
 //!
-//! Deliberately out of scope for this slice (SPK-007 continues later):
-//! authenticated remote servers, `tools/list_changed` re-discovery and
-//! automatic reconnect — the manager records connection health and a failed
-//! call surfaces as a tool error; reconnecting re-discovers.
+//! Server model (`agentic/MCP.md`): health, reconnect, tools re-discovery
+//! and enabled/disabled are first-class — a connection reports liveness,
+//! re-spawns its child process (or re-opens the HTTP session) when a call
+//! finds the transport closed, re-runs discovery on demand, and can be
+//! disabled so its tools leave the unified catalog without being
+//! unregistered. Authenticated remote servers remain open for SPK-007.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rmcp::model::{CallToolRequestParams, ClientInfo, ContentBlock, ToolAnnotations};
@@ -69,8 +71,7 @@ impl McpServerConfig {
     }
 }
 
-/// Connection status as reported by the API (health from `agentic/MCP.md`'s
-/// server model; reconnect handling lands with SPK-007 follow-ups).
+/// Connection liveness (the health question of `agentic/MCP.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ConnectionStatus {
@@ -84,21 +85,36 @@ pub struct McpServerStatus {
     pub transport: String,
     pub status: ConnectionStatus,
     pub tools: usize,
+    /// Disabled servers stay registered but their tools leave the catalog.
+    pub disabled: bool,
 }
 
-/// One live MCP client connection plus the tool descriptors discovered at
-/// connect time. `RunningService` is internally concurrent, so a connection
-/// is shared through an `Arc` across requests.
-pub struct McpConnection {
-    config: McpServerConfig,
+/// The live half of a connection: the negotiated session plus the tools it
+/// advertised. Behind a mutex so reconnect/refresh can swap them in place.
+struct ConnectionInner {
     service: RunningService<RoleClient, ClientInfo>,
     descriptors: Vec<ToolDescriptor>,
+}
+
+/// One MCP client connection. Shared through an `Arc` across requests;
+/// interior mutability supports reconnect and re-discovery.
+pub struct McpConnection {
+    config: McpServerConfig,
+    inner: Mutex<ConnectionInner>,
 }
 
 impl McpConnection {
     /// Connects, negotiates the session and discovers tools.
     pub async fn connect(config: McpServerConfig) -> Result<Self, McpError> {
         config.validate()?;
+        let inner = Self::open(&config).await?;
+        Ok(McpConnection {
+            config,
+            inner: Mutex::new(inner),
+        })
+    }
+
+    async fn open(config: &McpServerConfig) -> Result<ConnectionInner, McpError> {
         let service: RunningService<RoleClient, ClientInfo> = match (&config.command, &config.url)
         {
             (Some(command), None) => {
@@ -129,11 +145,7 @@ impl McpConnection {
             .iter()
             .map(|tool| mcp_tool_descriptor(&config.name, tool))
             .collect();
-        Ok(McpConnection {
-            config,
-            service,
-            descriptors,
-        })
+        Ok(ConnectionInner { service, descriptors })
     }
 
     pub fn name(&self) -> &str {
@@ -145,6 +157,7 @@ impl McpConnection {
     }
 
     pub fn status(&self) -> McpServerStatus {
+        let inner = self.inner.lock().expect("mcp connection lock");
         McpServerStatus {
             name: self.config.name.clone(),
             transport: if self.config.command.is_some() {
@@ -152,12 +165,13 @@ impl McpConnection {
             } else {
                 "http".to_owned()
             },
-            status: if self.service.is_transport_closed() {
+            status: if inner.service.is_transport_closed() {
                 ConnectionStatus::Unhealthy
             } else {
                 ConnectionStatus::Connected
             },
-            tools: self.descriptors.len(),
+            tools: inner.descriptors.len(),
+            disabled: false,
         }
     }
 
@@ -165,7 +179,11 @@ impl McpConnection {
     /// Takes `&Arc<Self>` so every entry can clone the shared handle the
     /// manager holds.
     pub fn entries(self: &Arc<Self>) -> Vec<ToolEntry> {
-        self.descriptors
+        let descriptors = {
+            let inner = self.inner.lock().expect("mcp connection lock");
+            inner.descriptors.clone()
+        };
+        descriptors
             .iter()
             .map(|descriptor| {
                 let remote = remote_name_of(&descriptor.id, &self.config.name);
@@ -174,15 +192,45 @@ impl McpConnection {
             .collect()
     }
 
-    /// Calls a remote tool by its *original* name.
+    /// Calls a remote tool by its *original* name. If the transport died
+    /// (child process exited, HTTP session dropped), the connection
+    /// reconnects once and retries — the reconnect question of
+    /// `agentic/MCP.md` answered in place.
     pub async fn call(&self, tool: &str, args: Value) -> Result<Value, ToolError> {
-        // `CallToolRequestParams` is `#[non_exhaustive]`: mutate the default.
-        let mut params = CallToolRequestParams::default();
-        params.name = tool.to_owned().into();
-        params.arguments = args.as_object().cloned();
-        let result = self
+        match self.call_inner(tool, args.clone()).await {
+            Ok(result) => Ok(result),
+            Err(_err) if self.transport_closed() => {
+                self.reconnect()
+                    .await
+                    .map_err(|e| ToolError::Failed(tool.to_owned(), e.to_string()))?;
+                self.call_inner(tool, args).await
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn transport_closed(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("mcp connection lock")
             .service
-            .peer()
+            .is_transport_closed()
+    }
+
+    async fn call_inner(&self, tool: &str, args: Value) -> Result<Value, ToolError> {
+        let params = {
+            let mut params = CallToolRequestParams::default();
+            params.name = tool.to_owned().into();
+            params.arguments = args.as_object().cloned();
+            params
+        };
+        // The peer handle multiplexes calls over the session; clone it out
+        // so the lock is never held across an await.
+        let peer = {
+            let inner = self.inner.lock().expect("mcp connection lock");
+            inner.service.peer().clone()
+        };
+        let result = peer
             .call_tool(params)
             .await
             .map_err(|e| ToolError::Failed(tool.to_owned(), e.to_string()))?;
@@ -201,21 +249,46 @@ impl McpConnection {
         }))
     }
 
-    /// Cancels the session (and with stdio, terminates the child process).
-    /// `cancel` consumes the `RunningService`; the last `Arc` owner does the
-    /// actual shutdown, earlier callers only request it.
-    pub async fn shutdown(self: Arc<Self>) {
-        if let Ok(connection) = Arc::try_unwrap(self) {
-            let _ = connection.service.cancel().await;
-        }
+    /// Re-discovers the server's tools (the `tools/list_changed` question):
+    /// replaces the descriptor set and returns the new count.
+    pub async fn refresh(&self) -> Result<usize, McpError> {
+        let peer = {
+            let inner = self.inner.lock().expect("mcp connection lock");
+            inner.service.peer().clone()
+        };
+        let listed = peer
+            .list_tools(None)
+            .await
+            .map_err(|e| McpError::Discovery(self.config.name.clone(), e.to_string()))?;
+        let descriptors: Vec<ToolDescriptor> = listed
+            .tools
+            .iter()
+            .map(|tool| mcp_tool_descriptor(&self.config.name, tool))
+            .collect();
+        let count = descriptors.len();
+        self.inner.lock().expect("mcp connection lock").descriptors = descriptors;
+        Ok(count)
+    }
+
+    /// Shuts the current session down and opens a fresh one (child process
+    /// re-spawned / HTTP session re-negotiated), re-discovering tools.
+    pub async fn reconnect(&self) -> Result<(), McpError> {
+        let fresh = Self::open(&self.config).await?;
+        let old = {
+            let mut inner = self.inner.lock().expect("mcp connection lock");
+            std::mem::replace(&mut *inner, fresh)
+        };
+        let _ = old.service.cancel().await;
+        Ok(())
     }
 }
 
-/// Manager for the live MCP connections (the `enabled/disabled` + `health`
-/// rows of `agentic/MCP.md`'s server model).
+/// Manager for the live MCP connections (`agentic/MCP.md`'s server model:
+/// enabled/disabled + health + reconnect).
 #[derive(Default)]
 pub struct McpManager {
     connections: Mutex<BTreeMap<String, Arc<McpConnection>>>,
+    disabled: Mutex<BTreeSet<String>>,
 }
 
 impl McpManager {
@@ -238,30 +311,74 @@ impl McpManager {
 
     /// Removes a server, returning the connection for an orderly shutdown.
     pub fn take(&self, name: &str) -> Option<Arc<McpConnection>> {
-        self.connections.lock().expect("mcp manager lock").remove(name)
+        self.disabled
+            .lock()
+            .expect("mcp manager lock")
+            .remove(name);
+        self.connections
+            .lock()
+            .expect("mcp manager lock")
+            .remove(name)
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<McpConnection>> {
-        self.connections.lock().expect("mcp manager lock").get(name).cloned()
+        self.connections
+            .lock()
+            .expect("mcp manager lock")
+            .get(name)
+            .cloned()
     }
 
-    /// Snapshots the live connections (for building the unified catalog).
+    /// Enabled/disabled (`agentic/MCP.md`): a disabled server keeps its
+    /// registration and connection but its tools leave the unified catalog.
+    pub fn set_disabled(&self, name: &str, disabled: bool) -> bool {
+        if self.get(name).is_none() {
+            return false;
+        }
+        let mut set = self.disabled.lock().expect("mcp manager lock");
+        if disabled {
+            set.insert(name.to_owned());
+        } else {
+            set.remove(name);
+        }
+        true
+    }
+
+    pub fn is_disabled(&self, name: &str) -> bool {
+        self.disabled
+            .lock()
+            .expect("mcp manager lock")
+            .contains(name)
+    }
+
+    /// Snapshots the live, ENABLED connections (for building the unified
+    /// catalog — disabled servers' tools stay out).
     pub fn connections(&self) -> Vec<Arc<McpConnection>> {
+        let disabled = self.disabled.lock().expect("mcp manager lock");
         self.connections
             .lock()
             .expect("mcp manager lock")
             .values()
+            .filter(|connection| !disabled.contains(connection.name()))
             .cloned()
             .collect()
     }
 
     pub fn status(&self) -> Vec<McpServerStatus> {
-        self.connections
+        let disabled = self.disabled.lock().expect("mcp manager lock");
+        let mut statuses: Vec<McpServerStatus> = self
+            .connections
             .lock()
             .expect("mcp manager lock")
             .values()
-            .map(|c| c.status())
-            .collect()
+            .map(|c| {
+                let mut status = c.status();
+                status.disabled = disabled.contains(&status.name);
+                status
+            })
+            .collect();
+        statuses.sort_by(|a, b| a.name.cmp(&b.name));
+        statuses
     }
 }
 

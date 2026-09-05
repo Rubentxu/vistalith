@@ -159,6 +159,10 @@ pub fn router(state: AppState) -> Router {
         .route("/tools/{id}/revoke", post(post_tool_revoke))
         .route("/mcp/servers", get(get_mcp_servers).post(post_mcp_server))
         .route("/mcp/servers/{name}", delete(delete_mcp_server))
+        .route("/mcp/servers/{name}/health", get(get_mcp_server_health))
+        .route("/mcp/servers/{name}/refresh", post(post_mcp_server_refresh))
+        .route("/mcp/servers/{name}/disable", post(post_mcp_server_disable))
+        .route("/mcp/servers/{name}/enable", post(post_mcp_server_enable))
         .route("/agents", get(get_agents).post(post_agent))
         .route("/frames", get(get_frames).post(post_frame))
         .route("/frames/{id}", get(get_frame))
@@ -765,7 +769,7 @@ async fn delete_mcp_server(
         state.grants.revoke(&descriptor.id);
         state.grants.set_denied(&descriptor.id, false);
     }
-    connection.shutdown().await;
+    drop(connection); // dropping the last Arc closes the transport
     Ok(Json(serde_json::json!({ "removed": name })))
 }
 
@@ -1263,6 +1267,60 @@ async fn get_why(
         message: format!("unknown subject `{subject}`"),
     })?;
     Ok(Json(serde_json::to_value(path).expect("why serialization")))
+}
+
+async fn get_mcp_server_health(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let connection = state.mcp.get(&name).ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: format!("unknown MCP server `{name}`"),
+    })?;
+    let status = connection.status();
+    Ok(Json(serde_json::to_value(status).expect("status serialization")))
+}
+
+async fn post_mcp_server_refresh(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let connection = state.mcp.get(&name).ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: format!("unknown MCP server `{name}`"),
+    })?;
+    let tools = connection
+        .refresh()
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    tracing::info!(server = %name, tools, "MCP tools re-discovered");
+    Ok(Json(serde_json::json!({ "server": name, "tools": tools })))
+}
+
+async fn post_mcp_server_disable(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !state.mcp.set_disabled(&name, true) {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown MCP server `{name}`"),
+        });
+    }
+    Ok(Json(serde_json::json!({ "server": name, "disabled": true })))
+}
+
+async fn post_mcp_server_enable(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !state.mcp.set_disabled(&name, false) {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown MCP server `{name}`"),
+        });
+    }
+    Ok(Json(serde_json::json!({ "server": name, "disabled": false })))
 }
 
 async fn get_sddk_receipts(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {

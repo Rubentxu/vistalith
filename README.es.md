@@ -31,6 +31,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 9 | Puente de promoción gobernada a SDDK — intents sobre sujetos SDDK pasan por el gateway de capacidades de SDDK, receipts durables (SPK-012, M7) | hecho |
 | 10 | Proyección del workflow SDDK al SWG (M6) + trazabilidad why-path (M9) | hecho |
 | 11 | Turnos en streaming — deltas SSE al chat web, misma durabilidad (SPK-006 parcial) | hecho |
+| 12 | Modelo de servidores MCP completo — health, reconexión automática, re-descubrimiento de tools, enable/disable (SPK-007 parcial) | hecho |
 
 ## Decisiones normativas del baseline
 
