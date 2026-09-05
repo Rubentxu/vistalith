@@ -25,7 +25,9 @@ use vistalith_graph::{
     AlgorithmGraph, ContextRequest, DecisionsLens, GraphDiff, GraphPatch, GraphStore,
     PatchOutcome, StoreError, append_and_react, c4_view, canonical_graph_json, why_path,
 };
-use vistalith_sddk_bridge::SddkBridge;
+use vistalith_sddk_bridge::{
+    FocusAnswer, FocusTest, PullUpEvaluation, SddkBridge,
+};
 
 /// Shared state: the durable log + its projection, and the conversation
 /// runtime. A tokio lock is used because a turn awaits the provider while
@@ -186,6 +188,7 @@ pub fn router(state: AppState) -> Router {
         .route("/algorithms/path", get(get_path))
         .route("/algorithms/cycles", get(get_cycles))
         .route("/sddk/receipts", get(get_sddk_receipts))
+        .route("/sddk/pull-up", post(post_sddk_pull_up))
         .route("/sddk/sync", post(post_sddk_sync))
         .route("/why/{namespace}/{kind}/{id}", get(get_why))
         .route("/lens/decisions", get(get_decisions_lens))
@@ -1328,6 +1331,181 @@ async fn post_mcp_server_enable(
         });
     }
     Ok(Json(serde_json::json!({ "server": name, "disabled": false })))
+}
+
+/// POST /sddk/pull-up — evaluate a Vistalith innovation against the SDDK
+/// focus test and, when it classifies as SDDK_PROPOSAL (or the caller
+/// declares a spike), submit it as governed evidence through the SDDK
+/// capability gateway (milestone M10).
+#[allow(clippy::too_many_lines)]
+async fn post_sddk_pull_up(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let Some(bridge) = state.sddk_bridge.as_ref() else {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: "no SDDK bridge configured (start with --sddk-ledger/--sddk-workflow)".to_owned(),
+        });
+    };
+    let feature = body
+        .get("feature")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `feature` string".to_owned()))?
+        .to_owned();
+    let semantic_core = body
+        .get("semantic_core")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let parse_answer = |key: &str| -> Result<FocusAnswer, ApiError> {
+        match body.get(key).and_then(|v| v.as_str()) {
+            Some("yes") => Ok(FocusAnswer::Yes),
+            Some("no") => Ok(FocusAnswer::No),
+            _ => Err(ApiError::bad_request(format!(
+                "`{key}` must be \"yes\" or \"no\""
+            ))),
+        }
+    };
+    let focus_test = FocusTest {
+        gui_free: parse_answer("gui_free")?,
+        llm_free: parse_answer("llm_free")?,
+        semantic_relevance: parse_answer("semantic_relevance")?,
+        no_duplicated_authority: parse_answer("no_duplicated_authority")?,
+        deterministic: parse_answer("deterministic")?,
+    };
+    let mut evidence = Vec::new();
+    if let Some(list) = body.get("evidence").and_then(|v| v.as_array()) {
+        for raw in list {
+            evidence.push(
+                raw.as_str()
+                    .ok_or_else(|| {
+                        ApiError::bad_request("`evidence` entries must be strings".to_owned())
+                    })?
+                    .to_owned(),
+            );
+        }
+    }
+    let proposed_horizon = body
+        .get("proposed_horizon")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    let evaluation = PullUpEvaluation {
+        feature: feature.clone(),
+        semantic_core,
+        focus_test,
+        evidence,
+        proposed_horizon,
+    };
+    let intent = body
+        .get("intent")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| SubjectRef::parse(raw).ok());
+    let target = body
+        .get("target")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| SubjectRef::parse(raw).ok());
+    let actor = body
+        .get("actor")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| vistalith_domain::Actor::new(raw).ok())
+        .unwrap_or_else(|| {
+            vistalith_domain::Actor::new("system:pull-up")
+                .expect("static actor")
+        });
+
+    let mut store = state.store.write().await;
+    // The evaluation target defaults to the observed SDDK project subject.
+    let target = target.unwrap_or_else(|| {
+        SubjectRef::new(
+            Namespace::Sddk,
+            SubjectKind::Project,
+            bridge.project_id().to_owned(),
+        )
+        .expect("project id is a valid subject id")
+    });
+    // The intent subject is optional: without one, the evaluation submits
+    // against the project directly (the bridge requires an existing intent,
+    // so synthesize one when absent).
+    // The synthesized intent drafts against `target`; the projection
+    // requires it to exist, so materialize the observed project subject
+    // (derived) when absent.
+    if store.graph().subject(&target).is_none() {
+        store
+            .append(vistalith_domain::VEvent {
+                event_id: uuid::Uuid::now_v7(),
+                actor: actor.clone(),
+                timestamp: time::OffsetDateTime::now_utc(),
+                subjects: vec![target.clone()],
+                correlation_id: uuid::Uuid::now_v7(),
+                causation_id: None,
+                trace_id: None,
+                payload: vistalith_domain::EventPayload::SubjectDefined(
+                    vistalith_domain::SubjectDefined {
+                        subject: target.clone(),
+                        authority: vistalith_domain::AuthorityClass::Derived,
+                        provenance: vistalith_domain::Provenance::new("system:pull-up")
+                            .expect("static provenance"),
+                        properties: std::collections::BTreeMap::from([(
+                            "project_id".to_owned(),
+                            serde_json::json!(bridge.project_id()),
+                        )]),
+                    },
+                ),
+            })
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    }
+
+    let synthesized;
+    let intent = match intent {
+        Some(intent) => intent,
+        None => {
+            synthesized = SubjectRef::new(
+                Namespace::Visual,
+                SubjectKind::VisualProposal,
+                uuid::Uuid::now_v7().to_string(),
+            )
+            .expect("generated intent id is valid");
+            let base_revision = store.graph().revision();
+            store
+                .append(vistalith_domain::VEvent {
+                    event_id: uuid::Uuid::now_v7(),
+                    actor: actor.clone(),
+                    timestamp: time::OffsetDateTime::now_utc(),
+                    subjects: vec![synthesized.clone(), target.clone()],
+                    correlation_id: uuid::Uuid::now_v7(),
+                    causation_id: None,
+                    trace_id: None,
+                    payload: vistalith_domain::EventPayload::IntentDrafted(
+                        vistalith_domain::IntentDrafted {
+                            intent: synthesized.clone(),
+                            target: target.clone(),
+                            gesture: "pull-up".to_owned(),
+                            change: serde_json::json!({ "operations": [] }),
+                            base_revision: base_revision + 1,
+                            reason: Some(format!("pull-up evaluation: {feature}")),
+                        },
+                    ),
+                })
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            synthesized
+        }
+    };
+
+    let approve = body.get("approve").and_then(|v| v.as_bool()).unwrap_or(false);
+    let outcome = bridge
+        .evaluate_pull_up(&mut store, &intent, &target, &evaluation, &actor, approve)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    tracing::info!(
+        feature = %feature,
+        classification = ?outcome.classification,
+        receipt = ?outcome.receipt_id,
+        "pull-up evaluated"
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(&outcome).expect("outcome serialization")),
+    ))
 }
 
 async fn get_sddk_receipts(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {

@@ -32,6 +32,7 @@ built and changed. The full planning baseline lives in
 | 11 | Streaming turns — SSE deltas to the web chat, identical durability (SPK-006 partial) | done |
 | 12 | MCP server model completion — health, auto-reconnect, tools re-discovery, enable/disable (SPK-007 partial) | done |
 | 13 | Decision lens — question/options/rejected/evidence inventory per decision (M9, DECISIONS-TIME.md) | done |
+| 14 | Innovation pull-up — focus-test evaluation + governed submission to SDDK (M10, INNOVATION-PULL-UP.md) | done |
 
 ## Normative baseline decisions
 
@@ -228,7 +229,12 @@ incoming support links with the evidence backbone —
 `GET /lens/decisions` (slice 13: the decision lens — per decision, the
 question, selected option, rejected alternatives, motivating requirement,
 supporting evidence, contradictions and revisits, read from the typed
-relations). `POST /intents/{id}/promote` takes `approve`
+relations),
+`POST /sddk/pull-up` (slice 14 / M10: evaluate a Vistalith innovation
+against the SDDK focus test — gui/llm-free, semantic relevance, no
+duplicated authority, deterministic — classify it deterministically
+(VISTALITH_ONLY → SDDK_PROPOSAL) and, for proposals, submit it as governed
+evidence through the SDDK capability gateway). `POST /intents/{id}/promote` takes `approve`
 (SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
 --sddk-project`, promotions on SDDK-owned subjects submit a governed
 proposal through the SDDK capability gateway — low risk executes and
@@ -244,6 +250,9 @@ behaviors, so replay stays byte-deterministic (milestone M4).
 
 The web client also has a **Decisions** lens rendering that chain per
 decision (M9: question → selected → rejected → evidence).
+The first pull-up candidate — the deterministic replay digest — is
+submitted and reviewed in
+[`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).
 The web chat streams assistant turns live (deltas render as they arrive).
 The web client has three lenses over the same identities: **Graph**
 (subjects/edges, with a time-travel selector and structural diff when

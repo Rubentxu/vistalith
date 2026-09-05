@@ -13,6 +13,8 @@
 //! *derived* observation with a `provides_evidence_for` edge to the target.
 //! Vistalith never writes SDDK state itself; it proposes, and SDDK decides.
 
+pub mod pull_up;
+
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
@@ -20,6 +22,8 @@ use vistalith_domain::{
     Actor, EventPayload, Namespace, SddkProposalSubmitted, SubjectKind, SubjectRef, VEvent,
 };
 use vistalith_graph::GraphStore;
+
+pub use pull_up::{FocusAnswer, FocusTest, PullUpClassification, PullUpError, PullUpEvaluation, PullUpOutcome};
 
 use sddk_domain::proposal::Proposal;
 use sddk_domain::workflow::WorkflowManifest;
@@ -491,7 +495,11 @@ fn deterministic_event_id(parts: &[&str]) -> uuid::Uuid {
     uuid::Uuid::from_bytes(bytes)
 }
 
-fn event(actor: Actor, payload: EventPayload, subjects: Vec<SubjectRef>) -> VEvent {
+pub(crate) fn event(
+    actor: Actor,
+    payload: EventPayload,
+    subjects: Vec<SubjectRef>,
+) -> VEvent {
     VEvent {
         event_id: Uuid::now_v7(),
         actor,

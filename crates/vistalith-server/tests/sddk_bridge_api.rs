@@ -214,3 +214,107 @@ async fn without_a_bridge_the_legacy_governance_route_applies() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(outcome["outcome"], "sddk-governed");
 }
+
+// --- Pull-up evaluation (slice 14, M10) ---------------------------------------
+
+#[tokio::test]
+async fn pull_up_evaluation_classifies_and_submits_governed() {
+    // Low-risk workflow: the SDDK_PROPOSAL evidence write executes.
+    let app = app_with_bridge(
+        r#"{
+            "schema_version": 1,
+            "workflow": { "id": "vistalith-bridge", "version": "0.1.0", "description": "pull-up fixture" },
+            "statuses": ["OPEN", "CLOSED"],
+            "phases": ["explore"],
+            "policies": {},
+            "transitions": [{ "id": "open", "to": { "status": "OPEN" }, "requires": [] }],
+            "forge": { "provider": "vistalith", "capabilities": {
+                "evidence.write": { "risk": "low", "consequence": "creates" }
+            } }
+        }"#,
+    );
+
+    let (status, outcome) = call(
+        app.clone(),
+        Request::post("/sddk/pull-up")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "feature": "deterministic-replay-digest",
+                    "semantic_core": "SHA-256 digest over an append-only event log with deterministic projection replay",
+                    "gui_free": "yes",
+                    "llm_free": "yes",
+                    "semantic_relevance": "yes",
+                    "no_duplicated_authority": "yes",
+                    "deterministic": "yes",
+                    "evidence": [
+                        "replay_tests::fixture_replays_deterministically",
+                        "rebuild_tests::stored_log_rebuilds_to_same_digest"
+                    ],
+                    "proposed_horizon": "H4 verification",
+                    "approve": false
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {outcome}");
+    assert_eq!(
+        outcome["classification"], "sddk-proposal",
+        "the replay digest passes every focus criterion with evidence"
+    );
+    assert!(outcome["receipt_id"].as_str().is_some());
+
+    // The SDDK ledger holds the governed receipt for the evaluation.
+    let (_, receipts) = call(
+        app,
+        Request::get("/sddk/receipts").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let receipts = receipts["receipts"].as_array().unwrap();
+    assert!(
+        receipts
+            .iter()
+            .any(|r| r["capability"] == serde_json::json!("evidence.write")
+                && r["status"] == serde_json::json!("succeeded"))
+    );
+}
+
+#[tokio::test]
+async fn pull_up_failing_focus_test_classifies_vistalith_only() {
+    let app = app_with_bridge(
+        r#"{
+            "schema_version": 1,
+            "workflow": { "id": "vistalith-bridge", "version": "0.1.0", "description": "pull-up fixture" },
+            "statuses": ["OPEN", "CLOSED"],
+            "phases": ["explore"],
+            "policies": {},
+            "transitions": [{ "id": "open", "to": { "status": "OPEN" }, "requires": [] }],
+            "forge": { "provider": "vistalith", "capabilities": {
+                "evidence.write": { "risk": "low", "consequence": "creates" }
+            } }
+        }"#,
+    );
+
+    let (status, outcome) = call(
+        app,
+        Request::post("/sddk/pull-up")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "feature": "canvas-gesture",
+                    "semantic_core": "a canvas gesture is inherently visual",
+                    "gui_free": "no",
+                    "llm_free": "yes",
+                    "semantic_relevance": "no",
+                    "no_duplicated_authority": "yes",
+                    "deterministic": "no"
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {outcome}");
+    assert_eq!(outcome["classification"], "vistalith-only");
+    assert_eq!(outcome["receipt_id"], serde_json::Value::Null);
+}
