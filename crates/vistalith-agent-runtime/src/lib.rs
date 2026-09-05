@@ -22,8 +22,8 @@ pub mod tools;
 
 pub use conversation::{ConversationEngine, ConversationError, ForkedThread, ThreadReply};
 pub use frames::{
-    FrameError, FrameSpec, FrameTurnReport, close_frame, define_agent, frame_system_prompt,
-    frame_thread, run_frame_turn, start_frame,
+    FrameError, FrameSpec, FrameTurnReport, close_frame, define_agent, finish_agent_run,
+    frame_system_prompt, frame_thread, run_frame_turn, start_agent_frame, start_frame,
 };
 pub use vistalith_domain::FrameOutcome;
 pub use intents::{

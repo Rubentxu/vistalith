@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  AgentRunResult,
   AppendedEvent,
   C4View,
   CanvasSubject,
@@ -480,6 +481,22 @@ export class VistalithClient {
     return this.postJson<{ intent: string; target: string }>(
       `/canvas/subjects/${enc(namespace)}/${enc(kind)}/${enc(id)}/promote`,
       { gesture },
+      { okStatus: 201, throwOnError: true },
+    );
+  }
+
+  /**
+   * Runs a goal on a defined agent: creates a frame delegated to it
+   * (agent instructions + tools + budget) and records the structured
+   * outputs (AGENTS-DELEGATION.md).
+   */
+  async runAgent(
+    id: string,
+    input: { goal: string; subjects?: string[]; token_budget?: number },
+  ): Promise<AgentRunResult> {
+    return this.postJson<import("./types.js").AgentRunResult>(
+      `/agents/${enc(id)}/run`,
+      input,
       { okStatus: 201, throwOnError: true },
     );
   }

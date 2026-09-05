@@ -70,6 +70,10 @@ pub enum EventPayload {
     /// optional evidence reference and notes — graph traceability to the
     /// scenario/work item without defining a parallel UAT lifecycle.
     UatCheckRecorded(UatCheckRecorded),
+    /// An agent run finished (`agentic/AGENTS-DELEGATION.md`): structured
+    /// outputs (findings/risks/assumptions) as durable typed items, never
+    /// flattened to prose.
+    AgentRunFinished(AgentRunFinished),
     /// A frame started (`graph/PATTERNS-VIEWS-FRAMES.md`): a bounded
     /// execution context — goal, subjects, permitted tools, budgets.
     FrameStarted(FrameStarted),
@@ -169,6 +173,22 @@ pub struct ToolInvoked {
     /// fork (SPEC-011 binding preservation). Absent on live calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_of: Option<SubjectRef>,
+}
+
+/// Structured outputs of a finished agent run (AGENTS-DELEGATION.md
+/// "Outputs"). Each item is a durable typed entry; the run subject links
+/// the frame, the agent and the outputs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentRunFinished {
+    pub run: SubjectRef,
+    pub agent: SubjectRef,
+    pub frame: SubjectRef,
+    /// findings / risks / assumptions / alternatives, each with its text.
+    pub findings: Vec<String>,
+    pub risks: Vec<String>,
+    pub assumptions: Vec<String>,
+    /// Verdict marker for quick lens filtering.
+    pub status: String,
 }
 
 /// A recorded UAT check (UAT-STUDIO.md). The check is a Vistalith-owned
@@ -412,6 +432,7 @@ impl VEvent {
             EventPayload::AgentDefined(_) => "agent-defined",
             EventPayload::SddkProposalSubmitted(_) => "sddk-proposal-submitted",
             EventPayload::UatCheckRecorded(_) => "uat-check-recorded",
+            EventPayload::AgentRunFinished(_) => "agent-run-finished",
             EventPayload::FrameStarted(_) => "frame-started",
             EventPayload::FrameTurnCompleted(_) => "frame-turn-completed",
             EventPayload::FrameClosed(_) => "frame-closed",

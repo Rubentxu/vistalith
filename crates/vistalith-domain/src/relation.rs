@@ -54,6 +54,8 @@ pub enum RelationKind {
     UsedTool,
     /// An exploration fork derived from this thread/graph state (SPEC-011).
     ForkedFrom,
+    /// An agent run contributing to a frame/subject (AGENTS-DELEGATION.md).
+    ContributesTo,
     /// A relation kind outside the shipped vocabulary (snake_case).
     Other(String),
 }
@@ -130,6 +132,7 @@ relation_kind_impl! {
     UsedModel => "used_model",
     UsedTool => "used_tool",
     ForkedFrom => "forked_from",
+    ContributesTo => "contributes_to",
 }
 
 /// Directed typed relation between two subjects.

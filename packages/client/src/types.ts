@@ -677,3 +677,13 @@ export interface CanvasSubject {
   authority: string;
   deprecated: boolean;
 }
+
+// --- Agent runs (slice 18, AGENTS-DELEGATION.md) -------------------------------
+
+export interface AgentRunResult {
+  run: string;
+  frame: string;
+  turns: number;
+  used_tokens: number;
+  auto_closed: string | null;
+}

@@ -20,7 +20,7 @@ pub use authority::AuthorityClass;
 pub use error::DomainError;
 pub use event::{
     AdvisoryRaised, AgentDefined, DeterminismClass, EventPayload, FrameClosed, FrameOutcome,
-    FrameStarted, FrameTurnCompleted, UatCheckRecorded, UatVerdict, IntentDrafted, IntentOutcome, IntentPromoted,
+    AgentRunFinished, FrameStarted, FrameTurnCompleted, UatCheckRecorded, UatVerdict, IntentDrafted, IntentOutcome, IntentPromoted,
     MessageAppended, PatchApplied, PatchRejected, RelationDeclared, StoredEvent, SubjectDefined,
     SddkProposalSubmitted, SubjectDeprecated, SubjectUpdated, ThreadForked, ThreadStarted, ToolInvoked, TurnCompleted,
     VEvent,

@@ -36,6 +36,7 @@ built and changed. The full planning baseline lives in
 | 15 | UAT checks — durable pass/fail/blocked records per scenario with lens inventory (UAT-STUDIO.md) | done |
 | 16 | Full impact analysis — direct/transitive, tests, stale evidence, invalidated decisions, explicit unknown impact (visual/IMPACT.md) | done |
 | 17 | Thinking canvas — free-form primitives as advisory subjects + progressive formalization to VisualIntent (VISUAL-THINKING.md) | done |
+| 18 | Agent runs — agent-defined frames, structured outputs, contributes_to/executed_by traceability (AGENTS-DELEGATION.md) | done |
 
 ## Normative baseline decisions
 
@@ -245,6 +246,10 @@ duplicated authority, deterministic — classify it deterministically
 evidence through the SDDK capability gateway),
 `POST /uat/checks` + `GET /lens/uat` (slice 15: durable UAT checks per
 scenario with the latest verdict),
+`POST /agents/{id}/run` (slice 18: run a goal on a defined agent — the
+frame is created with the agent's instructions, tools and budgets, and the
+run records structured outputs with contributes_to/executed_by
+traceability),
 `GET /algorithms/impact/{ns}/{kind}/{id}?full=true` (slice 16: the full
 impact analysis — direct and transitive dependents, affected tests, stale
 evidence, decisions possibly invalidated, and explicit unknown impact;

@@ -213,3 +213,71 @@ fn restricted_catalog_is_the_intersection_and_shares_grants() {
     // Same grant store: a grant made outside still governs inside.
     assert!(Arc::ptr_eq(&catalog.grants(), &restricted.grants()));
 }
+
+// --- Agents & runs (slice 18, AGENTS-DELEGATION.md) ---------------------------
+
+use vistalith_agent_runtime::{define_agent, finish_agent_run};
+
+#[tokio::test]
+async fn agent_frame_uses_agent_instructions_tools_and_budget() {
+    let mut store = GraphStore::new();
+    define(&mut store, container("svc"));
+    let agent = define_agent(
+        &mut store,
+        "impact analyst",
+        "assess dependency impact before answering",
+        None,
+        vec!["graph_search".to_owned()],
+        Some(1),
+        vec!["findings".to_owned()],
+    )
+    .unwrap();
+
+    let (frame, permitted) =
+        vistalith_agent_runtime::start_agent_frame(
+            &mut store,
+            &agent,
+            "assess payment service".to_owned(),
+            vec![container("svc")],
+            10,
+            100_000,
+        )
+        .unwrap();
+    // The agent's tool list and budget bound the frame.
+    assert_eq!(permitted, vec!["graph_search".to_owned()]);
+    let node = store.graph().subject(&frame).unwrap();
+    assert_eq!(node.properties["max_turns"], serde_json::json!(1));
+    assert!(node
+        .properties
+        .get("goal")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .contains("impact analyst"));
+
+    // Structured outputs of the run are durable with traceability edges.
+    let run = finish_agent_run(
+        &mut store,
+        &frame,
+        &agent,
+        "completed",
+        vec!["ledger change affects payment-service".to_owned()],
+        vec!["unknown long-term risk".to_owned()],
+        vec![],
+    )
+    .unwrap();
+    let run_node = store.graph().subject(&run).unwrap();
+    assert_eq!(
+        run_node.properties["findings"],
+        serde_json::json!(["ledger change affects payment-service"])
+    );
+    assert!(store.graph().relations().any(|f| {
+        f.relation.from == run
+            && f.relation.kind == vistalith_domain::RelationKind::ContributesTo
+            && f.relation.to == frame
+    }));
+    assert!(store.graph().relations().any(|f| {
+        f.relation.from == run
+            && f.relation.kind == vistalith_domain::RelationKind::ExecutedBy
+            && f.relation.to == agent
+    }));
+}

@@ -428,6 +428,53 @@ pub fn apply_event(
                 )));
             }
         }
+        EventPayload::AgentRunFinished(run) => {
+            for subject in [&run.agent, &run.frame] {
+                if graph.node(subject).is_none() {
+                    return Err(ProjectionError::UnknownSubject(subject.to_string()));
+                }
+            }
+            if graph.node(&run.run).is_some() {
+                return Err(ProjectionError::DuplicateSubject(run.run.to_string()));
+            }
+            let mut properties = thread_properties(&[
+                ("agent", serde_json::json!(run.agent.to_string())),
+                ("frame", serde_json::json!(run.frame.to_string())),
+                ("status", serde_json::json!(run.status)),
+            ]);
+            if !run.findings.is_empty() {
+                properties
+                    .insert("findings".to_owned(), serde_json::json!(run.findings));
+            }
+            if !run.risks.is_empty() {
+                properties.insert("risks".to_owned(), serde_json::json!(run.risks));
+            }
+            if !run.assumptions.is_empty() {
+                properties
+                    .insert("assumptions".to_owned(), serde_json::json!(run.assumptions));
+            }
+            graph.upsert_subject(
+                run.run.clone(),
+                AuthorityClass::Authoritative,
+                event_provenance(event),
+                properties,
+                sequence,
+            );
+            // Traceability edges: run contributes to the frame, is
+            // executed_by the agent.
+            for (kind, to) in [
+                (RelationKind::ContributesTo, run.frame.clone()),
+                (RelationKind::ExecutedBy, run.agent.clone()),
+            ] {
+                let fact = RelationFact {
+                    relation: RelationRef::new(run.run.clone(), kind, to)
+                        .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                    authority: AuthorityClass::Authoritative,
+                    provenance: event_provenance(event),
+                };
+                graph.declare_relation(fact, sequence);
+            }
+        }
         EventPayload::AgentDefined(defined) => {
             if graph.node(&defined.agent).is_some() {
                 return Err(ProjectionError::DuplicateSubject(

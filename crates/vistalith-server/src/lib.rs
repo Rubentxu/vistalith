@@ -18,8 +18,8 @@ use std::sync::Arc as StdArc;
 use vistalith_agent_runtime::{
     ConversationEngine, ConversationError, FakeProvider, FrameError, FrameOutcome, FrameSpec,
     GrantStore, McpManager, McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
-    close_frame, draft_intent, frame_system_prompt, promote_intent_with_bridge, run_frame_turn,
-    start_frame,
+    close_frame, draft_intent, finish_agent_run, frame_system_prompt,
+    promote_intent_with_bridge, run_frame_turn, start_agent_frame, start_frame,
 };
 use vistalith_domain::{
     Namespace, RelationKind, SubjectKind, SubjectRef, UatCheckRecorded, UatVerdict, VEvent,
@@ -169,6 +169,7 @@ pub fn router(state: AppState) -> Router {
         .route("/mcp/servers/{name}/disable", post(post_mcp_server_disable))
         .route("/mcp/servers/{name}/enable", post(post_mcp_server_enable))
         .route("/agents", get(get_agents).post(post_agent))
+        .route("/agents/{id}/run", post(post_agent_run))
         .route("/frames", get(get_frames).post(post_frame))
         .route("/frames/{id}", get(get_frame))
         .route("/frames/{id}/turns", post(post_frame_turn))
@@ -1021,6 +1022,74 @@ async fn post_agent(
     )?;
     tracing::info!(agent = %agent, "agent defined");
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "agent": agent.to_string() }))))
+}
+
+async fn post_agent_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let agent = SubjectRef::new(Namespace::Agentic, SubjectKind::Agent, id)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let goal = body
+        .get("goal")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `goal` string".to_owned()))?
+        .to_owned();
+    let mut subjects = Vec::new();
+    if let Some(list) = body.get("subjects").and_then(|v| v.as_array()) {
+        for raw in list {
+            subjects.push(
+                raw.as_str()
+                    .and_then(|raw| SubjectRef::parse(raw).ok())
+                    .ok_or_else(|| {
+                        ApiError::bad_request("`subjects` entries must be identity strings".to_owned())
+                    })?,
+            );
+        }
+    }
+    let token_budget = body.get("token_budget").and_then(|v| v.as_u64()).unwrap_or(8_000);
+
+    let mut store = state.store.write().await;
+    let (frame, permitted) = start_agent_frame(
+        &mut store,
+        &agent,
+        goal.clone(),
+        subjects,
+        5,
+        token_budget,
+    )?;
+    let prompt = frame_system_prompt(&store, &frame)?;
+    let registry = unified_catalog(&state).restricted_to(&permitted);
+    let engine = state.engine_with(registry, Some(prompt));
+
+    // Run one bounded turn, then close the frame and record the structured
+    // outputs (AGENTS-DELEGATION.md "Outputs").
+    let report = run_frame_turn(&mut store, &frame, &engine, goal).await?;
+    let findings = vec![format!(
+        "completed {} turn(s), {} tokens",
+        report.turns_used, report.used_tokens
+    )];
+    let run = finish_agent_run(
+        &mut store,
+        &frame,
+        &agent,
+        "completed",
+        findings,
+        Vec::new(),
+        Vec::new(),
+    )
+    .map_err(ApiError::from)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "run": run.to_string(),
+            "frame": frame.to_string(),
+            "turns": report.turns_used,
+            "used_tokens": report.used_tokens,
+            "auto_closed": report.auto_closed,
+        })),
+    ))
 }
 
 async fn get_agents(State(state): State<AppState>) -> Json<serde_json::Value> {

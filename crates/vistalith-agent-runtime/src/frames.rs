@@ -203,6 +203,111 @@ pub fn frame_thread(store: &GraphStore, frame: &SubjectRef) -> Result<SubjectRef
         .ok_or_else(|| FrameError::NoThread(frame.to_string()))
 }
 
+/// Starts a frame delegated to a defined agent: the agent's instructions,
+/// tools and budget drive the frame (AGENTS-DELEGATION.md). Returns both
+/// subjects.
+pub fn start_agent_frame(
+    store: &mut GraphStore,
+    agent: &SubjectRef,
+    goal: String,
+    subjects: Vec<SubjectRef>,
+    max_turns: u32,
+    token_budget: u64,
+) -> Result<(SubjectRef, Vec<String>), FrameError> {
+    let node = store
+        .graph()
+        .subject(agent)
+        .ok_or_else(|| FrameError::UnknownSubject(agent.to_string()))?;
+    let role = node
+        .properties
+        .get("role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("agent");
+    let instructions = node
+        .properties
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let tools: Vec<String> = node
+        .properties
+        .get("tools")
+        .and_then(|v| v.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|t| t.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    let agent_budget = node.properties.get("budget_turns").and_then(|v| v.as_u64());
+    let effective_turns = agent_budget
+        .map(|budget| budget.min(max_turns as u64) as u32)
+        .unwrap_or(max_turns);
+
+    let goal = format!("{goal} [agent: {role}] instructions: {instructions}");
+    let frame = start_frame(
+        store,
+        FrameSpec {
+            goal,
+            agent: Some(agent.clone()),
+            subjects,
+            permitted_tools: tools,
+            max_turns: effective_turns.max(1),
+            token_budget,
+        },
+    )?;
+    let frame_subject = frame;
+    let permitted = store
+        .graph()
+        .subject(&frame_subject)
+        .and_then(|node| {
+            node.properties
+                .get("permitted_tools")
+                .and_then(|v| v.as_array())
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|t| t.as_str().map(str::to_owned))
+                        .collect()
+                })
+        })
+        .unwrap_or_default();
+    Ok((frame_subject, permitted))
+}
+
+/// Records a finished agent run: structured outputs as a durable
+/// `agent-run-finished` event projected into the SWG with
+/// contributes_to/executed_by traceability edges.
+pub fn finish_agent_run(
+    store: &mut GraphStore,
+    frame: &SubjectRef,
+    agent: &SubjectRef,
+    status: impl Into<String>,
+    findings: Vec<String>,
+    risks: Vec<String>,
+    assumptions: Vec<String>,
+) -> Result<SubjectRef, FrameError> {
+    if store.graph().subject(frame).is_none() {
+        return Err(FrameError::UnknownFrame(frame.to_string()));
+    }
+    let run = SubjectRef::new(
+        Namespace::Agentic,
+        SubjectKind::WorkflowRun,
+        Uuid::now_v7().to_string(),
+    )
+    .expect("generated run id is valid");
+    store.append(frame_event(EventPayload::AgentRunFinished(
+        vistalith_domain::AgentRunFinished {
+            run: run.clone(),
+            agent: agent.clone(),
+            frame: frame.clone(),
+            findings,
+            risks,
+            assumptions,
+            status: status.into(),
+        },
+    )))?;
+    Ok(run)
+}
+
 /// The frame's system prompt: goal, bounds and the semantic context view of
 /// the bounded subjects (SPEC-005 view as agent context, with provenance
 /// available through the same view API).

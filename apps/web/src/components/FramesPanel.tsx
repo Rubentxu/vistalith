@@ -1,4 +1,8 @@
-import type { FrameSummary, VistalithClient } from "@vistalith/client";
+import type {
+  AgentInfo,
+  FrameSummary,
+  VistalithClient,
+} from "@vistalith/client";
 import { useCallback, useEffect, useState } from "react";
 import { client as defaultClient } from "../api.ts";
 
@@ -17,6 +21,9 @@ export function FramesPanel({
   client?: VistalithClient;
 }) {
   const [frames, setFrames] = useState<FrameSummary[]>([]);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [agentGoal, setAgentGoal] = useState("");
   const [activeFrame, setActiveFrame] = useState<string | null>(null);
   const [messages, setMessages] = useState<
     { id: string; role: string; content: string }[]
@@ -36,7 +43,11 @@ export function FramesPanel({
 
   useEffect(() => {
     void reloadFrames();
-  }, [reloadFrames]);
+    client
+      .agents()
+      .then(setAgents)
+      .catch(() => setAgents([]));
+  }, [reloadFrames, client]);
 
   const openFrame = useCallback(
     async (identity: string) => {
@@ -100,6 +111,24 @@ export function FramesPanel({
     }
   };
 
+  // AGENTS-DELEGATION: run a goal on the selected agent; a durable frame
+  // records the delegation and the structured outputs.
+  const runAgent = async () => {
+    const agentId = (selectedAgent ?? "").split(":")[2] ?? "";
+    if (!agentId || !agentGoal.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.runAgent(agentId, { goal: agentGoal.trim() });
+      setAgentGoal("");
+      await reloadFrames();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const close = async (identity: string, outcome: "completed" | "aborted") => {
     setBusy(true);
     setError(null);
@@ -116,6 +145,36 @@ export function FramesPanel({
   return (
     <div className="frames-panel" data-testid="frames-panel">
       <div className="frames-list">
+        {agents.length > 0 ? (
+          <div className="agent-run" data-testid="agent-run">
+            <h3>run agent</h3>
+            <select
+              aria-label="agent"
+              value={selectedAgent ?? ""}
+              onChange={(e) => setSelectedAgent(e.target.value || null)}
+            >
+              <option value="">— pick an agent —</option>
+              {agents.map((agent) => (
+                <option key={agent.agent} value={agent.agent}>
+                  {agent.role}
+                </option>
+              ))}
+            </select>
+            <input
+              value={agentGoal}
+              placeholder="goal…"
+              aria-label="agent goal"
+              onChange={(e) => setAgentGoal(e.target.value)}
+            />
+            <button
+              type="button"
+              disabled={busy || !selectedAgent || !agentGoal.trim()}
+              onClick={() => void runAgent()}
+            >
+              run
+            </button>
+          </div>
+        ) : null}
         <div className="frames-create">
           <input
             value={goal}
