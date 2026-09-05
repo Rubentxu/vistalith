@@ -28,6 +28,7 @@ built and changed. The full planning baseline lives in
 | 7 | Reactive behaviors (SPEC-003), graph algorithms via petgraph (ADR-007), semantic context view (SPEC-005) | done |
 | 8 | Frames — bounded execution contexts — plus Vistalith agents and delegation (`PATTERNS-VIEWS-FRAMES.md`, `AGENTS-DELEGATION.md`) | done |
 | 9 | Governed SDDK promotion bridge — intents on SDDK-owned subjects go through the SDDK capability gateway, receipts durable (SPK-012, M7) | done |
+| 10 | SDDK workflow projection into the SWG (M6) + why-path traceability (M9) | done |
 
 ## Normative baseline decisions
 
@@ -103,6 +104,11 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    SDDK's (the receipt) and Vistalith's (a `sddk-proposal-submitted` event
    projected as a derived observation providing evidence for the target).
    Without the bridge, the legacy governance routing applies.
+11. SDDK workflow projection (M6) and the why-path (M9) are read-only
+   observations: sync materializes ledger cycles as derived
+   `sddk:workflow:<id>` subjects (idempotent, deterministic event ids),
+   and the why-path only follows incoming support edges — neither ever
+   writes SDDK state.
 
 ## Repository layout
 
@@ -198,7 +204,12 @@ execution — the frame owns a thread, its `permitted_tools` restrict the
 unified catalog, and its turn/token budgets auto-close it: `completed`,
 `aborted`, `turns-exhausted`, `budget-exhausted`),
 `GET /sddk/receipts` (slice 9: receipts from the SDDK ledger when the
-bridge is configured). `POST /intents/{id}/promote` takes `approve`
+bridge is configured), `POST /sddk/sync` (slice 10 / M6: project SDDK
+ledger cycles into the SWG as derived `sddk:workflow:<id>` subjects,
+idempotent by deterministic event ids), and
+`GET /why/{namespace}/{kind}/{id}?depth=` (slice 10 / M9: the why-path —
+incoming support links with the evidence backbone —
+`provides_evidence_for` / `verifies` — highlighted). `POST /intents/{id}/promote` takes `approve`
 (SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
 --sddk-project`, promotions on SDDK-owned subjects submit a governed
 proposal through the SDDK capability gateway — low risk executes and

@@ -29,6 +29,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 7 | Comportamientos reactivos (SPEC-003), algoritmos de grafo vía petgraph (ADR-007), vista de contexto semántico (SPEC-005) | hecho |
 | 8 | Frames — contextos de ejecución acotados — más agentes Vistalith y delegación (`PATTERNS-VIEWS-FRAMES.md`, `AGENTS-DELEGATION.md`) | hecho |
 | 9 | Puente de promoción gobernada a SDDK — intents sobre sujetos SDDK pasan por el gateway de capacidades de SDDK, receipts durables (SPK-012, M7) | hecho |
+| 10 | Proyección del workflow SDDK al SWG (M6) + trazabilidad why-path (M9) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -109,6 +110,11 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    `sddk-proposal-submitted` proyectado como observación derivada que aporta
    evidencia al objetivo). Sin puente, aplica la ruta de gobernanza
    anterior.
+11. La proyección del workflow SDDK (M6) y el why-path (M9) son
+   observaciones de solo lectura: el sync materializa los ciclos del ledger
+   como sujetos derivados `sddk:workflow:<id>` (idempotente, ids de evento
+   deterministas), y el why-path solo sigue aristas de soporte entrantes —
+   ninguno escribe nunca estado SDDK.
 
 ## Estructura del repositorio
 

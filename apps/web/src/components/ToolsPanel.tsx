@@ -24,6 +24,7 @@ export function ToolsPanel({
   const [catalog, setCatalog] = useState<ToolsCatalog | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -36,6 +37,22 @@ export function ToolsPanel({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // M6: project the SDDK ledger into the SWG.
+  const syncSddk = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const report = await client.syncSddkWorkflow();
+      setSyncNote(
+        `synced: +${report.subjects_created} created, ~${report.subjects_updated} updated, ${report.events_skipped} skipped`,
+      );
+    } catch (err) {
+      setSyncNote(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const grant = async (id: string) => {
     setBusy(true);
@@ -66,6 +83,16 @@ export function ToolsPanel({
   return (
     <div className="tools-panel" data-testid="tools-panel">
       <h3>tools</h3>
+      <button
+        type="button"
+        className="sddk-sync"
+        aria-label="sync SDDK workflow"
+        disabled={busy}
+        onClick={() => void syncSddk()}
+      >
+        ⟳ sync SDDK workflow
+      </button>
+      {syncNote ? <p className="context-reason">{syncNote}</p> : null}
       {error ? <p className="chat-error">{error}</p> : null}
       <ul className="tools-list">
         {(catalog?.tools ?? []).map((tool) => (

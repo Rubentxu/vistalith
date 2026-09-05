@@ -248,3 +248,159 @@ fn undeclared_capabilities_are_denied_by_default() {
     );
     assert!(bridge.receipts().unwrap().is_empty());
 }
+
+// --- Workflow projection (slice 10, milestone M6) -----------------------------
+
+use vistalith_sddk_bridge::SyncReport;
+
+/// Inserts a cycle snapshot + causal event into the SDDK ledger, the way
+/// the SDDK engine does (`insert_cycle_with_event`).
+fn seed_cycle(
+    ledger: &std::path::Path,
+    cycle_id: &str,
+    status: sddk_domain::CycleStatus,
+    sequence: i64,
+) {
+    use sddk_domain::{CycleId, CycleManifest, LedgerEventInput, ProjectId};
+
+    // Cycles FK on (project_id, workspace_id): register project + workspace
+    // first, mirroring how the SDDK engine sets a project up.
+    {
+        let mut storage = sddk_storage::Storage::open(ledger).unwrap();
+        let project = sddk_domain::ProjectRecord {
+            project_id: "TEST-PROJECT".to_owned(),
+            display_name: "smoke project".to_owned(),
+            remote_url: None,
+            scope: "vistalith-bridge".to_owned(),
+            created_at: "2026-09-05T08:00:00Z".to_owned(),
+        };
+        let workspace = sddk_domain::WorkspaceRecord {
+            workspace_id: "ws-1".to_owned(),
+            project_id: "TEST-PROJECT".to_owned(),
+            canonical_path: "/tmp/ws-1".to_owned(),
+            created_at: "2026-09-05T08:00:00Z".to_owned(),
+        };
+        let _ = storage.register_project_workspace(&project, &workspace);
+    }
+
+    let manifest = CycleManifest::new(
+        "TEST-PROJECT".to_owned(),
+        "ws-1".to_owned(),
+        CycleId::from_parts(&ProjectId::new("TEST-PROJECT").unwrap(), cycle_id).unwrap(),
+        format!("cycle {cycle_id}"),
+        format!("cycle/{cycle_id}"),
+        "base-sha".to_owned(),
+    );
+    let manifest = CycleManifest {
+        status,
+        cycle_id: cycle_id.to_owned(),
+        ..manifest
+    };
+    let now = "2026-09-05T08:00:00Z".to_owned();
+    let record = sddk_domain::CycleRecord {
+        manifest: manifest.clone(),
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    let event = LedgerEventInput {
+        event_id: uuid::Uuid::now_v7().to_string(),
+        project_id: "TEST-PROJECT".to_owned(),
+        cycle_id: Some(cycle_id.to_owned()),
+        frame_id: format!("frame-{sequence}"),
+        command_id: format!("cmd-{sequence}"),
+        actor: "sddk-engine".to_owned(),
+        event_type: "cycle.updated".to_owned(),
+        occurred_at: now.clone(),
+        state_before: None,
+        state_after: Some(serde_json::to_value(&manifest).unwrap()),
+        payload: serde_json::json!({}),
+    };
+    let mut storage = sddk_storage::Storage::open(ledger).unwrap();
+    if storage.cycle_exists(cycle_id).unwrap() {
+        storage
+            .update_cycle_with_event(&manifest, &now, &event, false)
+            .unwrap();
+    } else {
+        storage.insert_cycle_with_event(&record, &event).unwrap();
+    }
+}
+
+#[test]
+fn workflow_sync_projects_cycles_and_is_idempotent() {
+    let ledger = std::env::temp_dir().join(format!(
+        "vistalith-bridge-sync-{}.sqlite",
+        uuid::Uuid::now_v7()
+    ));
+    let bridge = SddkBridge::open(
+        &ledger,
+        fixture_dir().join("workflow.json"),
+        "TEST-PROJECT",
+    )
+    .expect("bridge opens");
+
+    // Seed two cycles, then update one of them.
+    seed_cycle(&ledger, "m1", sddk_domain::CycleStatus::Open, 1);
+    seed_cycle(&ledger, "m1", sddk_domain::CycleStatus::ReleasePending, 2);
+    seed_cycle(&ledger, "m2", sddk_domain::CycleStatus::Blocked, 3);
+
+    let mut store = GraphStore::new();
+    let report = bridge
+        .sync_workflow(&mut store, &actor())
+        .expect("first sync");
+
+    // Two cycles projected + the project subject created.
+    assert_eq!(report.subjects_created, 3, "report: {report:?}");
+    let m1 = SubjectRef::new(Namespace::Sddk, SubjectKind::Workflow, "m1".to_owned()).unwrap();
+    let node = store.graph().subject(&m1).unwrap();
+    // The latest ledger event wins (VERIFYING over OPEN).
+    assert_eq!(node.properties["status"], serde_json::json!("RELEASE_PENDING"));
+    assert_eq!(node.properties["ledger_sequence"], serde_json::json!(2));
+    let m2 = SubjectRef::new(Namespace::Sddk, SubjectKind::Workflow, "m2".to_owned()).unwrap();
+    assert_eq!(
+        store.graph().subject(&m2).unwrap().properties["status"],
+        serde_json::json!("BLOCKED")
+    );
+    // The observed project exists and cycles derive from it.
+    let project = SubjectRef::new(
+        Namespace::Sddk,
+        SubjectKind::Project,
+        "TEST-PROJECT".to_owned(),
+    )
+    .unwrap();
+    assert!(store.graph().subject(&project).is_some());
+    assert!(store.graph().relations().any(|f| {
+        f.relation.from == m1
+            && f.relation.to == project
+            && f.relation.kind == vistalith_domain::RelationKind::DerivesFrom
+    }));
+
+    // Idempotent: syncing again with no new ledger events appends nothing.
+    let before = store.log().len();
+    let again = bridge.sync_workflow(&mut store, &actor()).unwrap();
+    let SyncReport {
+        subjects_created,
+        subjects_updated,
+        events_skipped,
+        ..
+    } = again;
+    assert_eq!(
+        (subjects_created, subjects_updated, events_skipped),
+        (0, 0, 2),
+        "re-sync skips already-materialized state: {again:?}"
+    );
+    assert_eq!(store.log().len(), before);
+
+    // A new ledger event updates the existing cycle subject in place.
+    seed_cycle(&ledger, "m2", sddk_domain::CycleStatus::Open, 4);
+    let report = bridge.sync_workflow(&mut store, &actor()).unwrap();
+    assert_eq!(report.subjects_updated, 1);
+    assert_eq!(
+        store.graph().subject(&m2).unwrap().properties["status"],
+        serde_json::json!("OPEN")
+    );
+
+    // Replay determinism over the synced log.
+    let stored = store.to_log_json();
+    let replayed = GraphStore::from_stored_json(&stored).unwrap();
+    assert_eq!(replayed.digest(), store.digest());
+}

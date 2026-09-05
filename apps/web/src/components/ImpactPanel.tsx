@@ -35,6 +35,20 @@ export function ImpactPanel({
     retry: 0,
   });
 
+  // M9: the why-path — what supports this subject, with the evidence
+  // backbone highlighted.
+  const why = useQuery({
+    queryKey: ["why", identity],
+    queryFn: () =>
+      client.why(
+        (selected as SubjectRef).namespace,
+        (selected as SubjectRef).kind,
+        (selected as SubjectRef).id,
+      ),
+    enabled: identity !== null,
+    retry: 0,
+  });
+
   if (!selected) return null;
 
   const buildContext = async () => {
@@ -48,6 +62,26 @@ export function ImpactPanel({
 
   return (
     <div className="impact-panel" data-testid="impact-panel">
+      {why.data && why.data.links?.length > 0 ? (
+        <div className="why-panel" data-testid="why-panel">
+          <h3>Why</h3>
+          <ul className="why-list">
+            {why.data.links.map((link) => (
+              <li key={`${link.depth}-${link.kind}-${link.from}`}>
+                <code>{link.from}</code>
+                <span className="context-reason">
+                  {link.kind}
+                  {link.kind === "provides_evidence_for" ||
+                  link.kind === "verifies"
+                    ? " · evidence"
+                    : ""}{" "}
+                  (depth {link.depth})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <h3>Impact</h3>
       {impact.data ? (
         impact.data.impacted.length === 0 ? (

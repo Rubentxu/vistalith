@@ -25,11 +25,13 @@ import type {
   StoredEvent,
   SubjectNode,
   SubjectRef,
+  SyncReport,
   ThreadReply,
   ThreadSummary,
   ThreadView,
   ToolsCatalog,
   VEvent,
+  WhyPath,
 } from "./types.js";
 import { subjectRefToString } from "./types.js";
 
@@ -302,6 +304,32 @@ export class VistalithClient {
       `/frames/${enc(id)}/close`,
       { outcome, summary },
       { okStatus: 200, throwOnError: true },
+    );
+  }
+
+  /**
+   * Projects the SDDK ledger into the SWG (M6). Requires the SDDK bridge.
+   */
+  async syncSddkWorkflow(): Promise<SyncReport> {
+    return this.postJson<SyncReport>(
+      "/sddk/sync",
+      {},
+      {
+        okStatus: 200,
+        throwOnError: true,
+      },
+    );
+  }
+
+  /** Why-path: what supports this subject (M9). */
+  async why(
+    namespace: string,
+    kind: string,
+    id: string,
+    depth = 3,
+  ): Promise<WhyPath> {
+    return this.getJson<WhyPath>(
+      `/why/${enc(namespace)}/${enc(kind)}/${enc(id)}?depth=${depth}`,
     );
   }
 

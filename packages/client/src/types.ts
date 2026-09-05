@@ -552,3 +552,26 @@ export interface SddkReceipt {
   started_at: string;
   completed_at: string | null;
 }
+
+// --- SDDK workflow sync + why path (slice 10, M6/M9) ---------------------------
+
+export interface SyncReport {
+  subjects_created: number;
+  subjects_updated: number;
+  relations_declared: number;
+  events_skipped: number;
+}
+
+export interface WhyLink {
+  depth: number;
+  kind: string;
+  from: string;
+  to: string;
+}
+
+export interface WhyPath {
+  subject: string;
+  links: WhyLink[];
+  evidence: WhyLink[];
+  max_depth_reached: number;
+}

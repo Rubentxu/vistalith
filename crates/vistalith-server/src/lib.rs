@@ -23,7 +23,7 @@ use vistalith_agent_runtime::{
 use vistalith_domain::{Namespace, RelationKind, SubjectKind, SubjectRef, VEvent};
 use vistalith_graph::{
     AlgorithmGraph, ContextRequest, GraphDiff, GraphPatch, GraphStore, PatchOutcome, StoreError,
-    append_and_react, c4_view, canonical_graph_json,
+    append_and_react, c4_view, canonical_graph_json, why_path,
 };
 use vistalith_sddk_bridge::SddkBridge;
 
@@ -181,6 +181,8 @@ pub fn router(state: AppState) -> Router {
         .route("/algorithms/path", get(get_path))
         .route("/algorithms/cycles", get(get_cycles))
         .route("/sddk/receipts", get(get_sddk_receipts))
+        .route("/sddk/sync", post(post_sddk_sync))
+        .route("/why/{namespace}/{kind}/{id}", get(get_why))
         .layer(cors)
         .with_state(state)
 }
@@ -1115,6 +1117,48 @@ async fn post_frame_close(
             message: format!("unknown frame `{frame}`"),
         })?;
     Ok(Json(frame_summary(node)))
+}
+
+async fn post_sddk_sync(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(bridge) = state.sddk_bridge.as_ref() else {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: "no SDDK bridge configured (start with --sddk-ledger/--sddk-workflow)".to_owned(),
+        });
+    };
+    let actor = vistalith_domain::Actor::new("system:sddk-sync")
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let mut store = state.store.write().await;
+    let report = bridge
+        .sync_workflow(&mut store, &actor)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    tracing::info!(created = report.subjects_created, updated = report.subjects_updated, "SDDK workflow synced");
+    Ok(Json(serde_json::to_value(report).expect("report serialization")))
+}
+
+async fn get_why(
+    State(state): State<AppState>,
+    Path((namespace, kind, id)): Path<(String, String, String)>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let subject = SubjectRef::new(
+        Namespace::parse(&namespace).map_err(|e| ApiError::bad_request(e.to_string()))?,
+        SubjectKind::parse(&kind).map_err(|e| ApiError::bad_request(e.to_string()))?,
+        id,
+    )
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let max_depth = match params.get("depth") {
+        None => 3,
+        Some(raw) => raw
+            .parse::<u8>()
+            .map_err(|e| ApiError::bad_request(format!("invalid `depth`: {e}")))?,
+    };
+    let store = state.store.read().await;
+    let path = why_path(store.graph(), &subject, max_depth).ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: format!("unknown subject `{subject}`"),
+    })?;
+    Ok(Json(serde_json::to_value(path).expect("why serialization")))
 }
 
 async fn get_sddk_receipts(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
