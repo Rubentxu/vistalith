@@ -35,6 +35,7 @@ built and changed. The full planning baseline lives in
 | 14 | Innovation pull-up — focus-test evaluation + governed submission to SDDK (M10, INNOVATION-PULL-UP.md) | done |
 | 15 | UAT checks — durable pass/fail/blocked records per scenario with lens inventory (UAT-STUDIO.md) | done |
 | 16 | Full impact analysis — direct/transitive, tests, stale evidence, invalidated decisions, explicit unknown impact (visual/IMPACT.md) | done |
+| 17 | Thinking canvas — free-form primitives as advisory subjects + progressive formalization to VisualIntent (VISUAL-THINKING.md) | done |
 
 ## Normative baseline decisions
 
@@ -247,7 +248,11 @@ scenario with the latest verdict),
 `GET /algorithms/impact/{ns}/{kind}/{id}?full=true` (slice 16: the full
 impact analysis — direct and transitive dependents, affected tests, stale
 evidence, decisions possibly invalidated, and explicit unknown impact;
-advisory only). `POST /intents/{id}/promote` takes `approve`
+advisory only),
+`POST|GET /canvas/subjects` and
+`POST /canvas/subjects/{ns}/{kind}/{id}/promote` (slice 17: the thinking
+canvas — note/question/hypothesis/option primitives as advisory subjects,
+attached by mention, formalizing into VisualIntent drafts on demand). `POST /intents/{id}/promote` takes `approve`
 (SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
 --sddk-project`, promotions on SDDK-owned subjects submit a governed
 proposal through the SDDK capability gateway — low risk executes and
@@ -262,7 +267,9 @@ subjects traced to their trigger via `causation_id`; replay never re-runs
 behaviors, so replay stays byte-deterministic (milestone M4).
 
 The web client also has a **Decisions** lens rendering that chain per
-decision (M9: question → selected → rejected → evidence).
+decision (M9: question → selected → rejected → evidence) and a
+**Thinking** lens: sketch primitives, attach them to semantic subjects and
+formalize them into VisualIntent drafts (progressive formalization).
 The first pull-up candidate — the deterministic replay digest — is
 submitted and reviewed in
 [`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).

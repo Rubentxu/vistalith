@@ -101,14 +101,17 @@ export function ImpactPanel({
               ))}
             </ul>
             {impact.data.affected_tests.length > 0 ? (
-              <p className="impact-section">tests: {impact.data.affected_tests?.length}</p>
+              <p className="impact-section">
+                tests: {impact.data.affected_tests?.length}
+              </p>
             ) : null}
             {(impact.data.stale_evidence?.length ?? 0) > 0 ? (
               <p className="impact-section">
                 stale evidence: {impact.data.stale_evidence?.length}
               </p>
             ) : null}
-            {(impact.data.decisions_potentially_invalidated?.length ?? 0) > 0 ? (
+            {(impact.data.decisions_potentially_invalidated?.length ?? 0) >
+            0 ? (
               <p className="impact-section">
                 decisions possibly invalidated:{" "}
                 {impact.data.decisions_potentially_invalidated?.length}

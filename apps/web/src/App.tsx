@@ -10,12 +10,13 @@ import { ImpactPanel } from "./components/ImpactPanel.tsx";
 import { IntentComposer } from "./components/IntentComposer.tsx";
 import { SubjectDetails } from "./components/SubjectDetails.tsx";
 import { SubjectList } from "./components/SubjectList.tsx";
+import { ThinkingPanel } from "./components/ThinkingPanel.tsx";
 import { HistoryDiff, TimeTravelBar } from "./components/TimeTravel.tsx";
 import { ToolsPanel } from "./components/ToolsPanel.tsx";
 import { useGraph, useHealth } from "./hooks.ts";
 import { useSelection } from "./state/selection.ts";
 
-type Lens = "graph" | "c4" | "chat" | "frames" | "decisions";
+type Lens = "graph" | "c4" | "chat" | "frames" | "decisions" | "thinking";
 
 const LENSES: { id: Lens; label: string }[] = [
   { id: "graph", label: "Graph" },
@@ -23,6 +24,7 @@ const LENSES: { id: Lens; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "frames", label: "Frames" },
   { id: "decisions", label: "Decisions" },
+  { id: "thinking", label: "Thinking" },
 ];
 
 export function App() {
@@ -149,6 +151,12 @@ export function App() {
               }}
             />
           </aside>
+        </main>
+      ) : lens === "thinking" ? (
+        <main className="app-main">
+          <section className="panel decisions-lens-host">
+            <ThinkingPanel client={client} />
+          </section>
         </main>
       ) : lens === "decisions" ? (
         <main className="app-main">

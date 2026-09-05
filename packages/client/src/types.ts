@@ -656,3 +656,24 @@ export interface UatScenarioView {
   latest_verdict: string;
   checks: UatCheck[];
 }
+
+// --- Visual thinking canvas (slice 17) ---------------------------------------
+
+export type CanvasKind = "note" | "question" | "hypothesis" | "option";
+
+export interface CreateCanvasSubjectInput {
+  kind: CanvasKind;
+  content: string;
+  /** Optional semantic subject the primitive is attached to. */
+  relates_to?: string;
+  actor?: string;
+}
+
+export interface CanvasSubject {
+  subject: string;
+  kind: string;
+  content: string;
+  relates_to?: string | null;
+  authority: string;
+  deprecated: boolean;
+}

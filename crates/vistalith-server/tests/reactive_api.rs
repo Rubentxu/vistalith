@@ -338,3 +338,82 @@ async fn full_impact_analysis_surfaces_all_sections() {
     assert!(report["impacted"].is_array());
     assert!(report.get("direct_dependents").is_none());
 }
+
+// --- Canvas / progressive formalization (slice 17, VISUAL-THINKING.md) ------
+
+#[tokio::test]
+async fn canvas_primitives_are_advisory_and_formalize_to_intents() {
+    let app = empty_store();
+    dependency_chain(&app).await;
+
+    // Sketch a question attached to a semantic subject (step 1+2).
+    let (status, primitive) = call(
+        app.clone(),
+        Request::post("/canvas/subjects")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "kind": "question",
+                    "content": "does the gateway need rate limiting?",
+                    "relates_to": "arch:container:gateway"
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {primitive}");
+    let subject = primitive["subject"].as_str().unwrap();
+    assert!(subject.starts_with("vistalith:question:"));
+
+    // It is advisory and inventoried.
+    let (_, canvas) = call(
+        app.clone(),
+        Request::get("/canvas/subjects").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let subjects = canvas["subjects"].as_array().unwrap();
+    assert_eq!(subjects.len(), 1);
+    assert_eq!(subjects[0]["authority"], "advisory");
+    assert_eq!(
+        subjects[0]["relates_to"],
+        serde_json::json!("arch:container:gateway")
+    );
+
+    // Progressive formalization (step 3-4): promote to a VisualIntent draft.
+    let subject_id = subject.rsplit(':').next().unwrap();
+    let (status, promoted) = call(
+        app.clone(),
+        Request::post(format!("/canvas/subjects/vistalith/question/{subject_id}/promote"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "gesture": "annotate" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {promoted}");
+    let intent = promoted["intent"].as_str().unwrap();
+    assert!(intent.starts_with("visual:visual-proposal:"));
+    assert_eq!(promoted["target"], serde_json::json!("arch:container:gateway"));
+
+    // Promotion of a primitive with no related subject is rejected.
+    let (status, _) = call(
+        app.clone(),
+        Request::post("/canvas/subjects")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{ "kind": "note", "content": "loose note" }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, err) = call(
+        app,
+        Request::post("/canvas/subjects/vistalith/note/loose/promote")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(err["error"].as_str().unwrap().contains("unknown canvas"));
+}

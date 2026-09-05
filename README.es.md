@@ -244,7 +244,9 @@ sujetos durables de clase advisory con traza a su trigger vía
 sigue siendo byte-determinista (hito M4).
 
 El cliente web también tiene una lente **Decisions** que renderiza esa
-cadena por decisión (M9: pregunta → elegida → rechazadas → evidencia).
+cadena por decisión (M9: pregunta → elegida → rechazadas → evidencia) y una
+lente **Thinking**: dibuja primitivas, adjúntalas a sujetos semánticos y
+formalízalas en drafts de VisualIntent (formalización progresiva).
 El primer candidato de pull-up — el digest de replay determinista — está
 enviado y revisado en
 [`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).

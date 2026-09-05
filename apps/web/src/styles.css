@@ -1089,3 +1089,36 @@ code {
   display: grid;
   gap: 0.3rem;
 }
+
+/* --- Thinking canvas (slice 17) --- */
+
+.thinking-create {
+  display: grid;
+  gap: 0.3rem;
+  margin-bottom: 0.6rem;
+}
+
+.thinking-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.thinking-item {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem;
+}
+
+.thinking-content {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.thinking-promote {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.35rem;
+  margin-top: 0.2rem;
+}

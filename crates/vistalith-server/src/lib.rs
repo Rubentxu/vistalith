@@ -18,7 +18,8 @@ use std::sync::Arc as StdArc;
 use vistalith_agent_runtime::{
     ConversationEngine, ConversationError, FakeProvider, FrameError, FrameOutcome, FrameSpec,
     GrantStore, McpManager, McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
-    close_frame, frame_system_prompt, promote_intent_with_bridge, run_frame_turn, start_frame,
+    close_frame, draft_intent, frame_system_prompt, promote_intent_with_bridge, run_frame_turn,
+    start_frame,
 };
 use vistalith_domain::{
     Namespace, RelationKind, SubjectKind, SubjectRef, UatCheckRecorded, UatVerdict, VEvent,
@@ -196,6 +197,9 @@ pub fn router(state: AppState) -> Router {
         .route("/lens/decisions", get(get_decisions_lens))
         .route("/uat/checks", post(post_uat_check))
         .route("/lens/uat", get(get_uat_lens))
+        .route("/canvas/subjects", post(post_canvas_subject))
+        .route("/canvas/subjects", get(get_canvas_subjects))
+        .route("/canvas/subjects/{ns}/{kind}/{id}/promote", post(post_canvas_promote))
         .layer(cors)
         .with_state(state)
 }
@@ -1362,6 +1366,244 @@ async fn get_uat_lens(State(state): State<AppState>) -> Json<serde_json::Value> 
     Json(serde_json::json!({ "scenarios": scenarios }))
 }
 
+// --- Visual thinking canvas (slice 17, VISUAL-THINKING.md) -------------------
+
+const CANVAS_KINDS: [(&str, SubjectKind); 4] = [
+    ("note", SubjectKind::Note),
+    ("question", SubjectKind::Question),
+    ("hypothesis", SubjectKind::Hypothesis),
+    ("option", SubjectKind::Option),
+];
+
+fn parse_canvas_kind(raw: &str) -> Option<SubjectKind> {
+    CANVAS_KINDS
+        .iter()
+        .find(|(name, _)| *name == raw)
+        .map(|(_, kind)| kind.clone())
+}
+
+/// POST /canvas/subjects — a free-form thinking primitive (note, question,
+/// hypothesis, option) becomes a Vistalith-owned ADVISORY semantic subject:
+/// sketching is a first-class engineering activity, and the primitive is
+/// already semantic (VISUAL-THINKING.md progressive formalization step 1).
+async fn post_canvas_subject(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let kind_name = body
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `kind` (note|question|hypothesis|option)".to_owned()))?
+        .to_owned();
+    let Some(kind) = parse_canvas_kind(&kind_name) else {
+        return Err(ApiError::bad_request(format!(
+            "unknown canvas kind `{kind_name}` (note|question|hypothesis|option)"
+        )));
+    };
+    let content = body
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("missing `content` string".to_owned()))?
+        .to_owned();
+    let actor = body
+        .get("actor")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| vistalith_domain::Actor::new(raw).ok())
+        .unwrap_or_else(|| vistalith_domain::Actor::new("user:canvas").expect("static actor"));
+
+    let subject = SubjectRef::new(
+        Namespace::Vistalith,
+        kind.clone(),
+        uuid::Uuid::now_v7().to_string(),
+    )
+    .expect("generated canvas id is valid");
+    let mut properties = std::collections::BTreeMap::from([
+        ("content".to_owned(), serde_json::json!(content)),
+        ("canvas_kind".to_owned(), serde_json::json!(kind_name)),
+    ]);
+    if let Some(link) = body
+        .get("relates_to")
+        .and_then(|v| v.as_str())
+    {
+        let target = SubjectRef::parse(link)
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+        properties.insert(
+            "relates_to".to_owned(),
+            serde_json::json!(target.to_string()),
+        );
+    }
+
+    let mut store = state.store.write().await;
+    // Advisory relation when the primitive is attached to a semantic subject.
+    let mut event_subjects = vec![subject.clone()];
+    if let Some(link) = body.get("relates_to").and_then(|v| v.as_str()) {
+        let target = SubjectRef::parse(link)
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+        if store.graph().subject(&target).is_none() {
+            return Err(ApiError {
+                status: StatusCode::NOT_FOUND,
+                message: format!("relates_to subject `{target}` does not exist"),
+            });
+        }
+        event_subjects.push(target.clone());
+    }
+    store
+        .append(vistalith_domain::VEvent {
+            event_id: uuid::Uuid::now_v7(),
+            actor: actor.clone(),
+            timestamp: time::OffsetDateTime::now_utc(),
+            subjects: event_subjects.clone(),
+            correlation_id: uuid::Uuid::now_v7(),
+            causation_id: None,
+            trace_id: None,
+            payload: vistalith_domain::EventPayload::SubjectDefined(
+                vistalith_domain::SubjectDefined {
+                    subject: subject.clone(),
+                    authority: vistalith_domain::AuthorityClass::Advisory,
+                    provenance: vistalith_domain::Provenance::new(actor.as_str())
+                        .expect("validated actor"),
+                    properties,
+                },
+            ),
+        })
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    // Advisory mention edge to the linked subject (step 2: semantic
+    // annotation).
+    if let Some(link) = body.get("relates_to").and_then(|v| v.as_str()) {
+        let target = SubjectRef::parse(link).expect("validated above");
+        store
+            .append(vistalith_domain::VEvent {
+                event_id: uuid::Uuid::now_v7(),
+                actor,
+                timestamp: time::OffsetDateTime::now_utc(),
+                subjects: vec![subject.clone(), target.clone()],
+                correlation_id: uuid::Uuid::now_v7(),
+                causation_id: None,
+                trace_id: None,
+                payload: vistalith_domain::EventPayload::RelationDeclared(
+                    vistalith_domain::RelationDeclared {
+                        fact: vistalith_domain::RelationFact {
+                            relation: vistalith_domain::RelationRef::new(
+                                subject.clone(),
+                                vistalith_domain::RelationKind::Mentions,
+                                target.clone(),
+                            )
+                            .map_err(|e| ApiError::bad_request(e.to_string()))?,
+                            authority: vistalith_domain::AuthorityClass::Advisory,
+                            provenance: vistalith_domain::Provenance::new("user:canvas")
+                                .expect("static provenance"),
+                        },
+                    },
+                ),
+            })
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    }
+    tracing::info!(subject = %subject, kind = %kind_name, "canvas primitive created");
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "subject": subject.to_string(), "kind": kind_name })),
+    ))
+}
+
+async fn get_canvas_subjects(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let canvas_kinds = CANVAS_KINDS
+        .iter()
+        .map(|(_, kind)| kind.clone())
+        .collect::<Vec<_>>();
+    let mut subjects: Vec<serde_json::Value> = store
+        .graph()
+        .subjects()
+        .filter(|node| canvas_kinds.contains(node.subject.kind()))
+        .map(|node| {
+            serde_json::json!({
+                "subject": node.subject.to_string(),
+                "kind": node.properties.get("canvas_kind").cloned().unwrap_or(
+                    serde_json::json!(node.subject.kind().as_str()),
+                ),
+                "content": node.properties.get("content").cloned().unwrap_or(serde_json::Value::Null),
+                "relates_to": node.properties.get("relates_to").cloned(),
+                "authority": node.authority,
+                "deprecated": node.deprecated,
+            })
+        })
+        .collect();
+    subjects.sort_by(|a, b| a["subject"].to_string().cmp(&b["subject"].to_string()));
+    Json(serde_json::json!({ "subjects": subjects }))
+}
+
+/// POST /canvas/subjects/{ns}/{kind}/{id}/promote — progressive
+/// formalization (VISUAL-THINKING.md): the sketch primitive becomes a
+/// candidate VisualIntent draft (SPEC-006). Still drafts only: promotion
+/// to the graph remains the explicit SPEC-006 act.
+async fn post_canvas_promote(
+    State(state): State<AppState>,
+    Path((ns, kind, id)): Path<(String, String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let primitive = SubjectRef::new(
+        Namespace::parse(&ns).map_err(|e| ApiError::bad_request(e.to_string()))?,
+        SubjectKind::parse(&kind).map_err(|e| ApiError::bad_request(e.to_string()))?,
+        id,
+    )
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let actor = body
+        .get("actor")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| vistalith_domain::Actor::new(raw).ok())
+        .unwrap_or_else(|| vistalith_domain::Actor::new("user:canvas").expect("static actor"));
+    let gesture = body
+        .get("gesture")
+        .and_then(|v| v.as_str())
+        .unwrap_or("annotate")
+        .to_owned();
+
+    let mut store = state.store.write().await;
+    let node = store.graph().subject(&primitive).ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: format!("unknown canvas subject `{primitive}`"),
+    })?;
+    let content = node
+        .properties
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let target = node
+        .properties
+        .get("relates_to")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| SubjectRef::parse(raw).ok());
+
+    let Some(target) = target else {
+        return Err(ApiError::bad_request(
+            "canvas primitive has no `relates_to` subject to formalize against;              attach it to a semantic subject first"
+                .to_owned(),
+        ));
+    };
+
+    let intent = draft_intent(
+        &mut store,
+        &target,
+        gesture,
+        serde_json::json!({
+            "operations": [],
+            "from_canvas": primitive.to_string(),
+            "content": content,
+        }),
+        Some(format!("promoted from canvas primitive {primitive}")),
+        &actor,
+    )?;
+    tracing::info!(canvas = %primitive, intent = %intent, "canvas primitive formalized");
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "intent": intent.to_string(),
+            "target": target.to_string(),
+        })),
+    ))
+}
+
 async fn get_decisions_lens(State(state): State<AppState>) -> Json<serde_json::Value> {
     let store = state.store.read().await;
     let lens: DecisionsLens = vistalith_graph::decisions_lens(store.graph());
@@ -1669,7 +1911,7 @@ async fn get_c4_view(State(state): State<AppState>) -> Json<serde_json::Value> {
 // --- Visual intents (slice 4, SPEC-006) -------------------------------------
 
 use vistalith_agent_runtime::{
-    IntentError, Promotion, discard_intent as discard_intent_op, draft_intent,
+    IntentError, Promotion, discard_intent as discard_intent_op,
     promote_intent as promote_intent_op,
 };
 use vistalith_domain::Actor;

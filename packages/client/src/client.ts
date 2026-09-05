@@ -2,6 +2,8 @@ import type {
   AgentInfo,
   AppendedEvent,
   C4View,
+  CanvasSubject,
+  CreateCanvasSubjectInput,
   CreateFrameInput,
   DecisionsLens,
   DraftIntentInput,
@@ -15,7 +17,6 @@ import type {
   GraphPatch,
   GraphState,
   Health,
-  ImpactAnalysis,
   ImpactReport,
   IntentDetail,
   IntentSummary,
@@ -447,6 +448,40 @@ export class VistalithClient {
   /** Decision lens inventory (slice 13, M9). */
   async decisionsLens(): Promise<DecisionsLens> {
     return this.getJson<DecisionsLens>("/lens/decisions");
+  }
+
+  // --- Visual thinking canvas (slice 17, VISUAL-THINKING.md) ---
+
+  /** Creates a free-form thinking primitive (advisory semantic subject). */
+  async createCanvasSubject(
+    input: CreateCanvasSubjectInput,
+  ): Promise<{ subject: string; kind: string }> {
+    return this.postJson<{ subject: string; kind: string }>(
+      "/canvas/subjects",
+      input,
+      { okStatus: 201, throwOnError: true },
+    );
+  }
+
+  async canvasSubjects(): Promise<CanvasSubject[]> {
+    const body = await this.getJson<{ subjects: CanvasSubject[] }>(
+      "/canvas/subjects",
+    );
+    return body.subjects;
+  }
+
+  /** Progressive formalization: primitive → VisualIntent draft (SPEC-006). */
+  async promoteCanvasSubject(
+    namespace: string,
+    kind: string,
+    id: string,
+    gesture = "annotate",
+  ): Promise<{ intent: string; target: string }> {
+    return this.postJson<{ intent: string; target: string }>(
+      `/canvas/subjects/${enc(namespace)}/${enc(kind)}/${enc(id)}/promote`,
+      { gesture },
+      { okStatus: 201, throwOnError: true },
+    );
   }
 
   // --- UAT checks + lens (slice 15, UAT-STUDIO.md) ---
