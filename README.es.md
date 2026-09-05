@@ -28,6 +28,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 6 | Cliente MCP (rmcp, stdio + Streamable HTTP), catálogo unificado de tools con grants de permisos con scope (SPEC-009, TOOLS-PERMISSIONS) | hecho |
 | 7 | Comportamientos reactivos (SPEC-003), algoritmos de grafo vía petgraph (ADR-007), vista de contexto semántico (SPEC-005) | hecho |
 | 8 | Frames — contextos de ejecución acotados — más agentes Vistalith y delegación (`PATTERNS-VIEWS-FRAMES.md`, `AGENTS-DELEGATION.md`) | hecho |
+| 9 | Puente de promoción gobernada a SDDK — intents sobre sujetos SDDK pasan por el gateway de capacidades de SDDK, receipts durables (SPK-012, M7) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -99,6 +100,15 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    debilitan el gate de permisos) y sus presupuestos de turnos/tokens son
    contabilidad durable que cierra el frame automáticamente. Los frames
    cerrados rechazan más turnos; cada límite y resultado es un evento.
+10. La promoción a SDDK es gobernada de extremo a extremo (SPK-012): con el
+   puente configurado, promover un intent sobre un sujeto SDDK envía un
+   `Proposal` por el `CapabilityGateway` de SDDK (policy default-deny desde
+   el workflow del proyecto; capacidades de alto riesgo exigen aprobación
+   explícita). La decisión y el receipt de SDDK quedan durables en **ambos**
+   ledgers — el de SDDK (el receipt) y el de Vistalith (un evento
+   `sddk-proposal-submitted` proyectado como observación derivada que aporta
+   evidencia al objetivo). Sin puente, aplica la ruta de gobernanza
+   anterior.
 
 ## Estructura del repositorio
 
@@ -107,6 +117,7 @@ crates/
 ├── vistalith-domain         # SubjectRef, VEvent, tipos de patch, clases de autoridad
 ├── vistalith-graph          # SWG, proyección de eventos, patches, behaviors, algoritmos petgraph, vista de contexto
 ├── vistalith-agent-runtime  # motor de conversación, frames, agentes, contratos de proveedor, cliente MCP, tools unificadas
+├── vistalith-sddk-bridge    # promoción gobernada a SDDK vía el gateway de capacidades (SPK-012)
 ├── vistalith-server         # `vistalithd` — servidor axum sobre el log de eventos + SWG
 └── vistalith-spike-surrealdb  # spike SPK-003 de la puerta de almacenamiento (toolchain propia; excluido)
 packages/

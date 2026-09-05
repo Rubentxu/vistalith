@@ -1,5 +1,5 @@
 [package]
-name = "vistalith-agent-runtime"
+name = "vistalith-sddk-bridge"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,16 +9,12 @@ authors.workspace = true
 [dependencies]
 vistalith-domain = { workspace = true }
 vistalith-graph = { workspace = true }
-vistalith-sddk-bridge = { workspace = true }
-rig-core = { workspace = true }
-rmcp = { workspace = true }
+sddk-domain = { workspace = true }
+sddk-gateway = { workspace = true }
+sddk-storage = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 uuid = { workspace = true }
-tokio = { workspace = true, features = ["process"] }
-
-[[bin]]
-name = "mcp-echo"
-path = "src/bin/mcp-echo.rs"

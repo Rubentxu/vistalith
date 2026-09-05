@@ -22,7 +22,7 @@ pub use event::{
     AdvisoryRaised, AgentDefined, DeterminismClass, EventPayload, FrameClosed, FrameOutcome,
     FrameStarted, FrameTurnCompleted, IntentDrafted, IntentOutcome, IntentPromoted,
     MessageAppended, PatchApplied, PatchRejected, RelationDeclared, StoredEvent, SubjectDefined,
-    SubjectDeprecated, SubjectUpdated, ThreadForked, ThreadStarted, ToolInvoked, TurnCompleted,
+    SddkProposalSubmitted, SubjectDeprecated, SubjectUpdated, ThreadForked, ThreadStarted, ToolInvoked, TurnCompleted,
     VEvent,
 };
 pub use model::{MessageRole, ModelDescriptor, ModelUsage};

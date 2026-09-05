@@ -27,6 +27,7 @@ built and changed. The full planning baseline lives in
 | 6 | MCP client (rmcp, stdio + Streamable HTTP), unified tool catalog with scoped permission grants (SPEC-009, TOOLS-PERMISSIONS) | done |
 | 7 | Reactive behaviors (SPEC-003), graph algorithms via petgraph (ADR-007), semantic context view (SPEC-005) | done |
 | 8 | Frames — bounded execution contexts — plus Vistalith agents and delegation (`PATTERNS-VIEWS-FRAMES.md`, `AGENTS-DELEGATION.md`) | done |
+| 9 | Governed SDDK promotion bridge — intents on SDDK-owned subjects go through the SDDK capability gateway, receipts durable (SPK-012, M7) | done |
 
 ## Normative baseline decisions
 
@@ -94,6 +95,14 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    permission gate), and its turn/token budgets are durable accounting
    that closes the frame automatically. Closed frames refuse further
    turns; every bound and outcome is an event.
+10. SDDK promotion is governed end to end (SPK-012): with the bridge
+   configured, promoting an intent on an SDDK-owned subject submits a
+   `Proposal` through SDDK's `CapabilityGateway` (default-deny policy from
+   the project workflow; high-risk capabilities demand explicit approval).
+   The decision and the SDDK receipt are durable in **both** ledgers —
+   SDDK's (the receipt) and Vistalith's (a `sddk-proposal-submitted` event
+   projected as a derived observation providing evidence for the target).
+   Without the bridge, the legacy governance routing applies.
 
 ## Repository layout
 
@@ -102,6 +111,7 @@ crates/
 ├── vistalith-domain         # SubjectRef, VEvent, patch types, authority classes
 ├── vistalith-graph          # SWG, event projection, patches, behaviors, petgraph algorithms, context view
 ├── vistalith-agent-runtime  # conversation engine, frames, agents, provider contracts, MCP client, unified tools
+├── vistalith-sddk-bridge    # governed SDDK promotion via the SDDK capability gateway (SPK-012)
 ├── vistalith-server         # `vistalithd` — axum server over the event log + SWG
 └── vistalith-spike-surrealdb  # SPK-003 storage gate spike (own toolchain; excluded)
 packages/
@@ -186,7 +196,14 @@ petgraph over an extracted snapshot; `?kinds=` restricts edge kinds),
 `POST /frames/{id}/turns`, `POST /frames/{id}/close` (slice 8: bounded
 execution — the frame owns a thread, its `permitted_tools` restrict the
 unified catalog, and its turn/token budgets auto-close it: `completed`,
-`aborted`, `turns-exhausted`, `budget-exhausted`).
+`aborted`, `turns-exhausted`, `budget-exhausted`),
+`GET /sddk/receipts` (slice 9: receipts from the SDDK ledger when the
+bridge is configured). `POST /intents/{id}/promote` takes `approve`
+(SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
+--sddk-project`, promotions on SDDK-owned subjects submit a governed
+proposal through the SDDK capability gateway — low risk executes and
+receipts; high risk requires `approve: true`; undeclared capabilities are
+denied by default).
 
 Live event appends (`POST /events`) dispatch the built-in reactive
 behaviors (SPEC-003): `impact-advisory` (a change to X advises every `X

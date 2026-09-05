@@ -18,13 +18,14 @@ use std::sync::Arc as StdArc;
 use vistalith_agent_runtime::{
     ConversationEngine, ConversationError, FakeProvider, FrameError, FrameOutcome, FrameSpec,
     GrantStore, McpManager, McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
-    close_frame, frame_system_prompt, run_frame_turn, start_frame,
+    close_frame, frame_system_prompt, promote_intent_with_bridge, run_frame_turn, start_frame,
 };
 use vistalith_domain::{Namespace, RelationKind, SubjectKind, SubjectRef, VEvent};
 use vistalith_graph::{
     AlgorithmGraph, ContextRequest, GraphDiff, GraphPatch, GraphStore, PatchOutcome, StoreError,
     append_and_react, c4_view, canonical_graph_json,
 };
+use vistalith_sddk_bridge::SddkBridge;
 
 /// Shared state: the durable log + its projection, and the conversation
 /// runtime. A tokio lock is used because a turn awaits the provider while
@@ -42,6 +43,9 @@ pub struct AppState {
     /// Reactive behaviors dispatched on live event appends (SPEC-003).
     /// Shared, because the built-in set is process-wide.
     behaviors: StdArc<Vec<Box<dyn vistalith_graph::Behavior>>>,
+    /// The governed SDDK promotion bridge (SPK-012), when configured
+    /// (`--sddk-ledger/--sddk-workflow/--sddk-project`).
+    sddk_bridge: Option<StdArc<SddkBridge>>,
 }
 
 impl AppState {
@@ -66,6 +70,7 @@ impl AppState {
             mcp: StdArc::new(McpManager::new()),
             grants: StdArc::new(GrantStore::new()),
             behaviors: StdArc::new(vistalith_graph::builtin_behaviors()),
+            sddk_bridge: None,
         }
     }
 
@@ -81,7 +86,18 @@ impl AppState {
             mcp,
             grants,
             behaviors: StdArc::new(vistalith_graph::builtin_behaviors()),
+            sddk_bridge: None,
         }
+    }
+
+    /// Installs the governed SDDK promotion bridge.
+    pub fn with_sddk_bridge(mut self, bridge: SddkBridge) -> Self {
+        self.sddk_bridge = Some(StdArc::new(bridge));
+        self
+    }
+
+    pub fn sddk_bridge(&self) -> Option<&StdArc<SddkBridge>> {
+        self.sddk_bridge.as_ref()
     }
 
     fn unified_catalog(&self) -> ToolRegistry {
@@ -164,6 +180,7 @@ pub fn router(state: AppState) -> Router {
         .route("/algorithms/impact/{namespace}/{kind}/{id}", get(get_impact))
         .route("/algorithms/path", get(get_path))
         .route("/algorithms/cycles", get(get_cycles))
+        .route("/sddk/receipts", get(get_sddk_receipts))
         .layer(cors)
         .with_state(state)
 }
@@ -1100,6 +1117,19 @@ async fn post_frame_close(
     Ok(Json(frame_summary(node)))
 }
 
+async fn get_sddk_receipts(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(bridge) = state.sddk_bridge.as_ref() else {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: "no SDDK bridge configured (start with --sddk-ledger/--sddk-workflow)".to_owned(),
+        });
+    };
+    let receipts = bridge
+        .receipts()
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "receipts": receipts })))
+}
+
 // --- C4 projection (slice 3, IMPLEMENT-NOW item 12) ------------------------
 
 async fn get_c4_view(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -1242,8 +1272,18 @@ async fn promote_intent(
 ) -> Result<Response, ApiError> {
     let intent = parse_intent(&id)?;
     let actor = body_actor(&body)?;
+    let approve = body.get("approve").and_then(|v| v.as_bool()).unwrap_or(false);
     let mut store = state.store.write().await;
-    let outcome = promote_intent_op(&mut store, &intent, &actor)?;
+    let outcome = match state.sddk_bridge.as_ref() {
+        Some(bridge) => promote_intent_with_bridge(
+            &mut store,
+            &intent,
+            &actor,
+            Some(bridge),
+            approve,
+        )?,
+        None => promote_intent_op(&mut store, &intent, &actor)?,
+    };
     tracing::info!(intent = %intent, outcome = ?outcome, "intent promoted");
     Ok(match outcome {
         Promotion::Applied { revision } => (
@@ -1257,6 +1297,21 @@ async fn promote_intent(
                 "subject": subject.to_string(),
                 "note": "SDDK-owned truth: convert this semantic change proposal into \
                          SDDK-governed work through the SDDK flow."
+            })),
+        ),
+        Promotion::SubmittedToSddk {
+            subject,
+            proposal,
+            receipt_id,
+            decision,
+        } => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "outcome": "submitted-to-sddk",
+                "subject": subject.to_string(),
+                "proposal": proposal.to_string(),
+                "decision": decision,
+                "receipt_id": receipt_id,
             })),
         ),
         Promotion::Stale {

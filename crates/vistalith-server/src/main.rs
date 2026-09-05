@@ -10,6 +10,12 @@ struct Args {
     fixture: Option<PathBuf>,
     provider: String,
     model: String,
+    /// Governed SDDK promotion bridge (SPK-012): all three flags together
+    /// enable intent promotions on SDDK-owned subjects to route through the
+    /// SDDK capability gateway.
+    sddk_ledger: Option<PathBuf>,
+    sddk_workflow: Option<PathBuf>,
+    sddk_project: Option<String>,
     /// With `--provider fake`: the first turn emits a scripted tool call for
     /// this tool id (deterministic MCP/tool smoke without a live model).
     fake_tool: Option<String>,
@@ -25,6 +31,9 @@ fn parse_args() -> Result<Args, String> {
         model: "claude-haiku-4-5".to_owned(),
         fake_tool: None,
         fake_args: "{}".to_owned(),
+        sddk_ledger: None,
+        sddk_workflow: None,
+        sddk_project: None,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -53,11 +62,25 @@ fn parse_args() -> Result<Args, String> {
             "--fake-args" => {
                 args.fake_args = iter.next().ok_or("--fake-args needs a JSON object")?;
             }
+            "--sddk-ledger" => {
+                args.sddk_ledger = Some(PathBuf::from(
+                    iter.next().ok_or("--sddk-ledger needs a path")?,
+                ));
+            }
+            "--sddk-workflow" => {
+                args.sddk_workflow = Some(PathBuf::from(
+                    iter.next().ok_or("--sddk-workflow needs a path")?,
+                ));
+            }
+            "--sddk-project" => {
+                args.sddk_project = Some(iter.next().ok_or("--sddk-project needs an id")?);
+            }
             other => {
                 return Err(format!(
                     "unknown argument: {other} (usage: vistalithd [--host H] [--port N] \
                      [--fixture FILE] [--provider fake|anthropic] [--model NAME]
-                     [--fake-tool TOOL_ID --fake-args JSON])"
+                     [--fake-tool TOOL_ID --fake-args JSON]
+                     [--sddk-ledger PATH --sddk-workflow PATH --sddk-project ID])"
                 ));
             }
         }
@@ -144,7 +167,39 @@ async fn main() {
     };
     tracing::info!(provider = %runtime.descriptor(), "conversation runtime ready");
 
-    let app = router(AppState::with_runtime(store, runtime));
+    let mut state = AppState::with_runtime(store, runtime);
+    let sddk_flags = (
+        args.sddk_ledger.clone(),
+        args.sddk_workflow.clone(),
+        args.sddk_project.clone(),
+    );
+    match sddk_flags {
+        (Some(ledger), Some(workflow), Some(project)) => {
+            match vistalith_sddk_bridge::SddkBridge::open(&ledger, &workflow, &project) {
+                Ok(bridge) => {
+                    tracing::info!(
+                        project = %project,
+                        workflow = %workflow.display(),
+                        "SDDK governed promotion bridge ready"
+                    );
+                    state = state.with_sddk_bridge(bridge);
+                }
+                Err(err) => {
+                    eprintln!("vistalithd: cannot open SDDK bridge: {err}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        (None, None, None) => {}
+        _ => {
+            eprintln!(
+                "vistalithd: --sddk-ledger, --sddk-workflow and --sddk-project must be provided together"
+            );
+            std::process::exit(2);
+        }
+    }
+
+    let app = router(state);
     let addr = format!("{}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

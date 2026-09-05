@@ -164,6 +164,8 @@ pub enum SubjectKind {
     VisualProposal,
     /// Output of a reactive behavior: advisory, never authoritative (SPEC-003).
     Advisory,
+    /// A governed SDDK proposal recorded from a Vistalith intent (SPK-012).
+    Proposal,
     /// A kind outside the shipped vocabulary (lowercase alphanumeric).
     Other(String),
 }
@@ -280,6 +282,7 @@ kind_impl! {
     SketchElement => "sketch-element",
     VisualProposal => "visual-proposal",
     Advisory => "advisory",
+    Proposal => "proposal",
 }
 
 /// Stable, revision-aware semantic identity (ADR-011).

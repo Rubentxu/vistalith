@@ -7,7 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { SubjectRef } from "@vistalith/client";
-import { VistalithClient } from "@vistalith/client";
+import { parseSubjectRef, VistalithClient } from "@vistalith/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IntentComposer } from "../src/components/IntentComposer.tsx";
 import { useSelection } from "../src/state/selection.ts";
@@ -141,5 +141,93 @@ describe("IntentComposer (SPEC-006 lifecycle)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "propose draft" }));
     expect(screen.getByText("give the new name first")).toBeInTheDocument();
+  });
+});
+
+// --- Governed SDDK promotion (slice 9, SPK-012) ---
+
+import type { IntentDetail } from "@vistalith/client";
+
+describe("IntentComposer governed SDDK promotion (SPEC-012)", () => {
+  function jsonResponse(status: number, body: unknown): Response {
+    return {
+      status,
+      text: async () => JSON.stringify(body),
+    } as unknown as Response;
+  }
+
+  function sddkClient(handlers: {
+    draft?: unknown;
+    promote: unknown;
+    detail?: unknown;
+  }): VistalithClient {
+    const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      const key = `${init?.method ?? "GET"} ${path}`;
+      const status = key === "POST /intents" ? 201 : 200;
+      const body =
+        key === "POST /intents"
+          ? handlers.draft
+          : key === "GET /intents/i1"
+            ? handlers.detail
+            : key === "POST /intents/i1/promote"
+              ? handlers.promote
+              : (() => {
+                  throw new Error(`unexpected fetch: ${key}`);
+                })();
+      return Promise.resolve(jsonResponse(status, body));
+    });
+    return new VistalithClient({
+      baseUrl: "http://127.0.0.1:7420",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+  }
+
+  it("renders the sddk proposal decision and receipt", async () => {
+    const detail: IntentDetail = {
+      summary: {
+        intent: "agentic:visual-proposal:i1",
+        target: "sddk:work-item:TEST-1",
+        gesture: "annotate",
+        status: "draft",
+        base_revision: 6,
+        stale: false,
+      },
+      change: { operations: [] },
+      current_revision: 6,
+    };
+    const client = sddkClient({
+      draft: {
+        intent: "agentic:visual-proposal:i1",
+        base_revision: 6,
+      },
+      detail,
+      promote: {
+        outcome: "submitted-to-sddk",
+        subject: "sddk:work-item:TEST-1",
+        proposal: "vistalith:proposal:p1",
+        decision: "allowed",
+        receipt_id: "cap-evidence-write-abc123def456",
+      },
+    });
+
+    render(
+      <IntentComposer
+        client={client}
+        selected={parseSubjectRef("sddk:work-item:TEST-1")}
+      />,
+    );
+
+    // Draft the intent (annotate gesture: no-op draft), then promote it:
+    // the server routes through the SDDK gateway and answers with the
+    // decision + receipt.
+    fireEvent.change(screen.getByLabelText("intent gesture"), {
+      target: { value: "annotate" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "propose draft" }));
+    await waitFor(() => screen.getByText(/base revision 6/));
+    fireEvent.click(screen.getByRole("button", { name: "promote" }));
+    await waitFor(() => screen.getByText(/submitted to SDDK \(allowed\)/));
+    expect(screen.getByText(/receipt cap-evidence-write/)).toBeInTheDocument();
   });
 });

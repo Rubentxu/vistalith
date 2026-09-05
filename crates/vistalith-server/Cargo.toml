@@ -14,6 +14,7 @@ path = "src/main.rs"
 vistalith-domain = { workspace = true }
 vistalith-graph = { workspace = true }
 vistalith-agent-runtime = { workspace = true }
+vistalith-sddk-bridge = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 tower-http = { version = "0.6", features = ["cors"] }

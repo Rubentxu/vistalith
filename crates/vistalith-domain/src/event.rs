@@ -62,6 +62,10 @@ pub enum EventPayload {
     /// A Vistalith agent was registered (`agentic/AGENTS-DELEGATION.md`):
     /// role, instructions, model profile, tools and expected outputs.
     AgentDefined(AgentDefined),
+    /// A governed SDDK proposal went through the SDDK capability gateway
+    /// (SPK-012): the decision and the SDDK receipt are durable here, so the
+    /// promotion is traceable end to end (milestone M7).
+    SddkProposalSubmitted(SddkProposalSubmitted),
     /// A frame started (`graph/PATTERNS-VIEWS-FRAMES.md`): a bounded
     /// execution context — goal, subjects, permitted tools, budgets.
     FrameStarted(FrameStarted),
@@ -161,6 +165,25 @@ pub struct ToolInvoked {
     /// fork (SPEC-011 binding preservation). Absent on live calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_of: Option<SubjectRef>,
+}
+
+/// A governed SDDK proposal (SPK-012 / milestone M7). The proposal subject
+/// is a Vistalith-owned observation of an SDDK-side fact: the decision and
+/// the SDDK receipt (serialized) are durable provenance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SddkProposalSubmitted {
+    pub proposal: SubjectRef,
+    pub intent: SubjectRef,
+    pub target: SubjectRef,
+    /// SDDK capability exercised, e.g. `evidence.write`.
+    pub capability: String,
+    /// Gateway decision: `allowed`, `denied` or `approval-required`.
+    pub decision: String,
+    /// SDDK receipt id when the capability executed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_id: Option<String>,
+    /// Full SDDK receipt (or the denial/approval payload) as JSON.
+    pub receipt: serde_json::Value,
 }
 
 /// A Vistalith agent (`agentic/AGENTS-DELEGATION.md`).
@@ -287,6 +310,15 @@ pub enum IntentOutcome {
     /// flow (SPEC-001 invariant 4; the chat transcript is not SDDK Decision
     /// Memory).
     RoutedToSddkGovernance { subject: SubjectRef },
+    /// The proposal went through SDDK's capability gateway (SPK-012): the
+    /// decision and receipt are durable in the `sddk-proposal-submitted`
+    /// event this outcome accompanies.
+    SubmittedToSddk {
+        subject: SubjectRef,
+        proposal: SubjectRef,
+        receipt_id: Option<String>,
+        decision: String,
+    },
     /// The graph moved on since the draft; preview is stale, promotion denied.
     StaleBase { current_revision: u64 },
     /// Rejected locally by patch validation (unknown subject, etc.).
@@ -347,6 +379,7 @@ impl VEvent {
             EventPayload::ThreadForked(_) => "thread-forked",
             EventPayload::AdvisoryRaised(_) => "advisory-raised",
             EventPayload::AgentDefined(_) => "agent-defined",
+            EventPayload::SddkProposalSubmitted(_) => "sddk-proposal-submitted",
             EventPayload::FrameStarted(_) => "frame-started",
             EventPayload::FrameTurnCompleted(_) => "frame-turn-completed",
             EventPayload::FrameClosed(_) => "frame-closed",

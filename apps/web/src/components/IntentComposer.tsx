@@ -81,7 +81,7 @@ export function IntentComposer({
     try {
       const result = await client.promoteIntent(
         draft.intent.split(":")[2] ?? draft.intent,
-        "user:web",
+        { actor: "user:web" },
       );
       setOutcome(result);
       setDraft(null);
@@ -164,6 +164,10 @@ export function IntentComposer({
             `applied at revision ${outcome.revision}`}
           {outcome.outcome === "sddk-governed" &&
             `routed to SDDK governance: ${outcome.subject}`}
+          {outcome.outcome === "submitted-to-sddk" &&
+            `submitted to SDDK (${outcome.decision})${
+              outcome.receipt_id ? ` · receipt ${outcome.receipt_id}` : ""
+            }: ${outcome.subject}`}
           {outcome.outcome === "stale" &&
             "preview is stale — refresh and re-draft"}
           {outcome.outcome === "rejected" && `rejected: ${outcome.reason}`}

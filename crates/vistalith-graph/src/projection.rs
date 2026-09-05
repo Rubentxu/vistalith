@@ -323,6 +323,58 @@ pub fn apply_event(
                 )));
             }
         }
+        EventPayload::SddkProposalSubmitted(submitted) => {
+            if graph.node(&submitted.intent).is_none() {
+                return Err(ProjectionError::UnknownSubject(submitted.intent.to_string()));
+            }
+            if graph.node(&submitted.target).is_none() {
+                return Err(ProjectionError::UnknownSubject(submitted.target.to_string()));
+            }
+            if graph.node(&submitted.proposal).is_some() {
+                return Err(ProjectionError::DuplicateSubject(
+                    submitted.proposal.to_string(),
+                ));
+            }
+            // SPK-012: the proposal is a Vistalith-owned DERIVED observation
+            // of an SDDK-side fact — never authoritative SDDK state.
+            graph.upsert_subject(
+                submitted.proposal.clone(),
+                AuthorityClass::Derived,
+                event_provenance(event),
+                thread_properties(&[
+                    ("capability", serde_json::json!(submitted.capability)),
+                    ("decision", serde_json::json!(submitted.decision)),
+                    (
+                        "receipt_id",
+                        submitted
+                            .receipt_id
+                            .clone()
+                            .map(serde_json::Value::String)
+                            .unwrap_or(serde_json::Value::Null),
+                    ),
+                    ("receipt", submitted.receipt.clone()),
+                    ("intent", serde_json::json!(submitted.intent.to_string())),
+                ]),
+                sequence,
+            );
+            // The proposal is evidence for the SDDK subject it targets.
+            let fact = RelationFact {
+                relation: RelationRef::new(
+                    submitted.proposal.clone(),
+                    RelationKind::ProvidesEvidenceFor,
+                    submitted.target.clone(),
+                )
+                .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                authority: AuthorityClass::Derived,
+                provenance: event_provenance(event),
+            };
+            if !graph.declare_relation(fact, sequence) {
+                return Err(ProjectionError::DuplicateRelation(format!(
+                    "{} provides evidence for {}",
+                    submitted.proposal, submitted.target
+                )));
+            }
+        }
         EventPayload::AgentDefined(defined) => {
             if graph.node(&defined.agent).is_some() {
                 return Err(ProjectionError::DuplicateSubject(
@@ -543,6 +595,7 @@ pub fn apply_event(
             let status = match &promoted.outcome {
                 IntentOutcome::AppliedToGraph { .. } => "applied",
                 IntentOutcome::RoutedToSddkGovernance { .. } => "sddk-governed",
+                IntentOutcome::SubmittedToSddk { .. } => "submitted",
                 IntentOutcome::StaleBase { .. } => "stale",
                 IntentOutcome::RejectedLocally { .. } => "rejected",
                 IntentOutcome::Discarded { .. } => "discarded",
@@ -554,6 +607,17 @@ pub fn apply_event(
                 }
                 IntentOutcome::RejectedLocally { reason } => {
                     properties.insert("reject_reason".to_owned(), serde_json::json!(reason));
+                }
+                IntentOutcome::SubmittedToSddk {
+                    subject,
+                    receipt_id,
+                    decision,
+                    ..
+                } => {
+                    properties.insert("sddk_subject".to_owned(), serde_json::json!(subject.to_string()));
+                    properties
+                        .insert("sddk_receipt_id".to_owned(), receipt_id.clone().into());
+                    properties.insert("sddk_decision".to_owned(), serde_json::json!(decision));
                 }
                 _ => {}
             }

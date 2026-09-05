@@ -340,13 +340,28 @@ export class VistalithClient {
     return this.getJson<IntentDetail>(`/intents/${enc(id)}`);
   }
 
-  /** Explicit promotion. Applied/governed → 200, stale → 409 (normal result). */
-  async promoteIntent(id: string, actor?: string): Promise<PromotionOutcome> {
+  /**
+   * Explicit promotion. Applied/submitted/governed → 200, stale → 409
+   * (normal result). With the SDDK bridge configured server-side,
+   * `approve` supplies the human approval for high-risk capabilities.
+   */
+  async promoteIntent(
+    id: string,
+    options: { actor?: string; approve?: boolean } = {},
+  ): Promise<PromotionOutcome> {
     return this.postJson<PromotionOutcome>(
       `/intents/${enc(id)}/promote`,
-      actor ? { actor } : {},
+      options,
       { okStatus: 200, throwOnError: false },
     );
+  }
+
+  /** Receipts recorded in the SDDK ledger (requires the bridge). */
+  async sddkReceipts(): Promise<import("./types.js").SddkReceipt[]> {
+    const body = await this.getJson<{
+      receipts: import("./types.js").SddkReceipt[];
+    }>("/sddk/receipts");
+    return body.receipts;
   }
 
   async discardIntent(

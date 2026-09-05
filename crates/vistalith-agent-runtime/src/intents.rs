@@ -39,6 +39,12 @@ pub enum Promotion {
     RoutedToSddkGovernance {
         subject: SubjectRef,
     },
+    SubmittedToSddk {
+        subject: SubjectRef,
+        proposal: SubjectRef,
+        receipt_id: Option<String>,
+        decision: String,
+    },
     Stale {
         current_revision: u64,
         base_revision: u64,
@@ -92,6 +98,21 @@ pub fn promote_intent(
     intent: &SubjectRef,
     actor: &Actor,
 ) -> Result<Promotion, IntentError> {
+    promote_intent_with_bridge(store, intent, actor, None, false)
+}
+
+/// Promotes a draft with the SDDK governance bridge available (SPK-012):
+/// SDDK-owned targets route through SDDK's capability gateway — the
+/// decision and receipt are durable — instead of the bare governance
+/// routing. `approve` supplies explicit human approval for capabilities the
+/// SDDK workflow marks as high risk.
+pub fn promote_intent_with_bridge(
+    store: &mut GraphStore,
+    intent: &SubjectRef,
+    actor: &Actor,
+    bridge: Option<&vistalith_sddk_bridge::SddkBridge>,
+    approve: bool,
+) -> Result<Promotion, IntentError> {
     let node = store
         .graph()
         .subject(intent)
@@ -119,6 +140,12 @@ pub fn promote_intent(
         .get("change")
         .cloned()
         .ok_or_else(|| IntentError::InvalidChange("intent has no change payload".to_owned()))?;
+    let note = node
+        .properties
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("visual intent promotion")
+        .to_owned();
 
     // Stale-aware promotion (SPEC-006): the preview must match the graph.
     let current_revision = store.graph().revision();
@@ -170,6 +197,66 @@ pub fn promote_intent(
             // SDDK-owned targets route to governance: the semantic change
             // proposal becomes SDDK-governed work through SDDK's own flow.
             if reason.contains("governed SDDK") {
+                if let Some(bridge) = bridge {
+                    // SPK-012 / M7: propose through the SDDK capability
+                    // gateway. The decision and the SDDK receipt are durable
+                    // in the sddk-proposal-submitted event.
+                    let bundle = serde_json::json!({
+                        "artifacts": [],
+                        "environment": {},
+                        "execution": {},
+                        "change": change,
+                    });
+                    let proposal = bridge
+                        .submit_evidence_proposal(
+                            store,
+                            intent,
+                            &target,
+                            bundle,
+                            note,
+                            actor,
+                            approve,
+                        )
+                        .map_err(|e| {
+                            IntentError::InvalidChange(format!("sddk bridge: {e}"))
+                        })?;
+                    let proposal_node = store
+                        .graph()
+                        .subject(&proposal)
+                        .ok_or_else(|| {
+                            IntentError::InvalidChange(
+                                "bridge proposal missing from projection".to_owned(),
+                            )
+                        })?;
+                    let decision = proposal_node
+                        .properties
+                        .get("decision")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_owned();
+                    let receipt_id = proposal_node
+                        .properties
+                        .get("receipt_id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned);
+                    record(
+                        store,
+                        actor,
+                        intent,
+                        IntentOutcome::SubmittedToSddk {
+                            subject: target.clone(),
+                            proposal: proposal.clone(),
+                            receipt_id: receipt_id.clone(),
+                            decision: decision.clone(),
+                        },
+                    )?;
+                    return Ok(Promotion::SubmittedToSddk {
+                        subject: target,
+                        proposal,
+                        receipt_id,
+                        decision,
+                    });
+                }
                 record(
                     store,
                     actor,

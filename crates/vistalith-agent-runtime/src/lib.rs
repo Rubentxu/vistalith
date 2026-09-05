@@ -26,7 +26,10 @@ pub use frames::{
     frame_thread, run_frame_turn, start_frame,
 };
 pub use vistalith_domain::FrameOutcome;
-pub use intents::{IntentError, Promotion, discard_intent, draft_intent, promote_intent};
+pub use intents::{
+    IntentError, Promotion, discard_intent, draft_intent, promote_intent,
+    promote_intent_with_bridge,
+};
 pub use mcp::{
     ConnectionStatus, McpConnection, McpError, McpManager, McpServerConfig, McpServerStatus,
     catalog_id, consequence_from_annotations,

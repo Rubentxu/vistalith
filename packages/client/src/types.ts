@@ -314,12 +314,6 @@ export interface DraftIntentInput {
   actor?: string;
 }
 
-export type PromotionOutcome =
-  | { outcome: "applied"; revision: number }
-  | { outcome: "sddk-governed"; subject: string; note?: string }
-  | { outcome: "stale"; current_revision: number; base_revision: number }
-  | { outcome: "rejected"; reason: string };
-
 // --- C4 projection ----------------------------------------------------------
 
 export interface C4Element {
@@ -530,4 +524,31 @@ export interface FrameTurnReply {
   turn: number;
   content: { turns_used: number; used_tokens: number };
   auto_closed: string | null;
+}
+
+// --- Governed SDDK promotion (slice 9, SPK-012) ------------------------------
+
+export type PromotionOutcome =
+  | { outcome: "applied"; revision: number }
+  | { outcome: "sddk-governed"; subject: string; note?: string }
+  | {
+      outcome: "submitted-to-sddk";
+      subject: string;
+      proposal: string;
+      decision: "allowed" | "denied" | "approval-required";
+      receipt_id: string | null;
+    }
+  | { outcome: "stale"; current_revision: number; base_revision: number }
+  | { outcome: "rejected"; reason: string };
+
+export interface SddkReceipt {
+  receipt_id: string;
+  project_id: string;
+  cycle_id: string | null;
+  capability: string;
+  request_hash: string;
+  status: string;
+  result: unknown;
+  started_at: string;
+  completed_at: string | null;
 }

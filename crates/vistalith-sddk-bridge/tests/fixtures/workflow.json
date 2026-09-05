@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "workflow": {
+    "id": "vistalith-bridge",
+    "version": "0.1.0",
+    "description": "Workflow fixture for the Vistalith governed promotion bridge"
+  },
+  "statuses": [
+    "OPEN",
+    "CLOSED"
+  ],
+  "phases": [
+    "explore",
+    "build",
+    "verify"
+  ],
+  "forge": {
+    "provider": "vistalith",
+    "capabilities": {
+      "evidence.write": {
+        "risk": "low",
+        "consequence": "creates"
+      }
+    }
+  },
+  "policies": {},
+  "transitions": [
+    {
+      "id": "open",
+      "to": {
+        "status": "OPEN"
+      },
+      "requires": []
+    }
+  ]
+}
