@@ -4,6 +4,7 @@ import { client } from "./api.ts";
 import { C4ViewPanel } from "./components/C4ViewPanel.tsx";
 import { ChatPanel } from "./components/ChatPanel.tsx";
 import { DecisionLensPanel } from "./components/DecisionLensPanel.tsx";
+import { FlowPanel } from "./components/FlowPanel.tsx";
 import { FramesPanel } from "./components/FramesPanel.tsx";
 import { GraphView } from "./components/GraphView.tsx";
 import { ImpactPanel } from "./components/ImpactPanel.tsx";
@@ -17,11 +18,19 @@ import { ToolsPanel } from "./components/ToolsPanel.tsx";
 import { useGraph, useHealth } from "./hooks.ts";
 import { useSelection } from "./state/selection.ts";
 
-type Lens = "graph" | "c4" | "chat" | "frames" | "decisions" | "thinking";
+type Lens =
+  | "graph"
+  | "c4"
+  | "flow"
+  | "chat"
+  | "frames"
+  | "decisions"
+  | "thinking";
 
 const LENSES: { id: Lens; label: string }[] = [
   { id: "graph", label: "Graph" },
   { id: "c4", label: "C4" },
+  { id: "flow", label: "Flow" },
   { id: "chat", label: "Chat" },
   { id: "frames", label: "Frames" },
   { id: "decisions", label: "Decisions" },
@@ -158,6 +167,19 @@ export function App() {
                 void queryClient.invalidateQueries({ queryKey: ["c4"] });
               }}
             />
+          </aside>
+        </main>
+      ) : lens === "flow" ? (
+        <main className="app-main">
+          <section className="panel flow-panel-host">
+            {graph ? (
+              <FlowPanel graph={graph} />
+            ) : (
+              <p className="empty">waiting for the graph…</p>
+            )}
+          </section>
+          <aside className="panel">
+            <SubjectDetails graph={graph} />
           </aside>
         </main>
       ) : lens === "thinking" ? (

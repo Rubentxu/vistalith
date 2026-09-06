@@ -1247,3 +1247,71 @@ code {
   color: #ff6b6b;
   font-size: 0.75rem;
 }
+
+/* --- Flow lens (slice 21, SPK-010: React Flow + ELK) --- */
+
+.flow-panel-host {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.flow-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
+.flow-canvas {
+  flex: 1;
+  min-height: 420px;
+  border: 1px solid var(--border, #2a2d34);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.flow-canvas .react-flow__node {
+  font-size: 0.7rem;
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border, #2a2d34);
+  background: var(--surface-2, #1d2026);
+  color: var(--text, #e6e6e6);
+  width: 176px;
+  text-align: center;
+}
+
+.flow-canvas .flow-node-workflow {
+  border-color: #7aa2f7;
+}
+
+.flow-canvas .flow-node-workflow-run {
+  border-color: #9ece6a;
+}
+
+.flow-canvas .flow-node-agent {
+  border-color: #bb9af7;
+}
+
+.flow-canvas .flow-node-frame {
+  border-color: #e0af68;
+}
+
+.flow-canvas .flow-status-running {
+  box-shadow: 0 0 0 2px #9ece6a;
+}
+
+.flow-canvas .flow-status-failed {
+  box-shadow: 0 0 0 2px #f7768e;
+}
+
+.flow-canvas .flow-edge {
+  font-size: 0.55rem;
+}
+
+.flow-legend {
+  font-size: 0.7rem;
+  margin: 0.3rem 0 0;
+}

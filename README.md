@@ -39,6 +39,7 @@ built and changed. The full planning baseline lives in
 | 18 | Agent runs — agent-defined frames, structured outputs, contributes_to/executed_by traceability (AGENTS-DELEGATION.md) | done |
 | 19 | LikeC4 round-trip — C4 DSL export/import with `SubjectRef` identity in metadata + architecture revision diff (SPK-008) | done |
 | 20 | Excalidraw semantic bindings — durable shape→subject bindings keyed by content, never by renderer shape ids (SPK-009, ADR-014) | done |
+| 21 | Workflow/agent lens — React Flow + ELK with off-main-thread layout at 1k/10k nodes and no-re-layout live status (SPK-010, ADR-015) | done |
 
 ## Normative baseline decisions
 
@@ -164,6 +165,7 @@ docs/DEPENDENCIES.md   # dependency pins and pin policy
 docs/SURREALDB-SPIKE.md  # SPK-003 gate report and verdict
 docs/LIKEC4-SPIKE.md   # SPK-008 LikeC4 round-trip report
 docs/EXCALIDRAW-BINDINGS.md  # SPK-009 canvas binding report
+docs/REACTFLOW-ELK-SPIKE.md  # SPK-010 workflow lens report (measurements included)
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
 ```
 
@@ -316,11 +318,15 @@ The first pull-up candidate — the deterministic replay digest — is
 submitted and reviewed in
 [`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).
 The web chat streams assistant turns live (deltas render as they arrive).
-The web client has three lenses over the same identities: **Graph**
+The web client has four lenses over the same identities: **Graph**
 (subjects/edges, with a time-travel selector and structural diff when
 viewing a past revision), **C4** (projected view — with a LikeC4
 round-trip section: export the DSL, edit it, import it back, and an
-architecture diff between revisions) and **Chat** (threads,
+architecture diff between revisions), **Flow** (workflow/agent lens over
+React Flow + ELK: layered layout computed in a Web Worker, viewport
+virtualization for 1k/10k-node graphs, and live status updates that
+re-render badges without re-layout — SPK-010; bench fixtures via
+`scripts/gen-flow-bench.mjs --nodes 10000`) and **Chat** (threads,
 with a per-thread fork action; copied items are marked `⎇ forked`, and the
 tools panel lists the unified catalog where ask-class tools can be granted
 or revoked).

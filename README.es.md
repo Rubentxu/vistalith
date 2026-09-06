@@ -40,6 +40,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 18 | Ejecuciones de agentes — frames definidos por agente, salidas estructuradas, trazabilidad contributes_to/executed_by (AGENTS-DELEGATION.md) | hecho |
 | 19 | Round-trip LikeC4 — export/import del DSL C4 con identidad `SubjectRef` en metadatos + diff de revisión de arquitectura (SPK-008) | hecho |
 | 20 | Bindings semánticos Excalidraw — bindings durables forma→sujeto claveados por contenido, nunca por ids de forma del renderer (SPK-009, ADR-014) | hecho |
+| 21 | Lente workflow/agent — React Flow + ELK con layout off-main-thread a 1k/10k nodos y estados en vivo sin re-layout (SPK-010, ADR-015) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -174,6 +175,7 @@ docs/DEPENDENCIES.md   # pins de dependencias y política de pinning
 docs/SURREALDB-SPIKE.md  # informe y veredicto de la puerta SPK-003
 docs/LIKEC4-SPIKE.md   # informe del round-trip LikeC4 (SPK-008)
 docs/EXCALIDRAW-BINDINGS.md  # informe de bindings de canvas (SPK-009)
+docs/REACTFLOW-ELK-SPIKE.md  # informe de la lente workflow (SPK-010, con mediciones)
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # baseline de planificación (docs)
 ```
 
@@ -336,11 +338,15 @@ El primer candidato de pull-up — el digest de replay determinista — está
 enviado y revisado en
 [`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).
 El chat web muestra los turnos del asistente en vivo (los deltas se renderizan a medida que llegan).
-El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
+El cliente web tiene cuatro lentes sobre las mismas identidades: **Graph**
 (sujetos/aristas, con selector de time travel y diff estructural al ver una
 revisión pasada), **C4** (vista proyectada — con una sección de round-trip
 LikeC4: exportar el DSL, editarlo, importarlo de vuelta, y un diff de
-arquitectura entre revisiones) y **Chat** (hilos, con acción de
+arquitectura entre revisiones), **Flow** (lente workflow/agent sobre
+React Flow + ELK: layout por capas computado en un Web Worker,
+virtualización de viewport para grafos de 1k/10k nodos, y estados en vivo
+que re-renderizan badges sin re-layout — SPK-010; fixtures de bench con
+`scripts/gen-flow-bench.mjs --nodes 10000`) y **Chat** (hilos, con acción de
 fork por hilo; los items copiados se marcan `⎇ forked`, y el panel de tools
 muestra el catálogo unificado donde las tools ask se conceden o revocan).
 Seleccionar un sujeto en cualquier lente propaga el mismo `SubjectRef`.

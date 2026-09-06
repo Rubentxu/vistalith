@@ -13,6 +13,8 @@
   "dependencies": {
     "@tanstack/react-query": "5.102.8",
     "@vistalith/client": "workspace:*",
+    "@xyflow/react": "12.8.6",
+    "elkjs": "0.9.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zustand": "5.0.15"
