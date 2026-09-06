@@ -20,7 +20,10 @@ pub mod mcp;
 pub mod provider;
 pub mod tools;
 
-pub use conversation::{ConversationEngine, ConversationError, ForkedThread, ThreadReply};
+pub use conversation::{
+    ConversationEngine, ConversationError, ForkedThread, ThreadReply, TurnOverrides,
+    parse_mention_refs,
+};
 pub use frames::{
     FrameError, FrameSpec, FrameTurnReport, close_frame, define_agent, finish_agent_run,
     frame_system_prompt, frame_thread, run_frame_turn, start_agent_frame, start_frame,

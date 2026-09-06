@@ -56,6 +56,7 @@ fn conversation_store() -> (GraphStore, u64) {
                     content: format!("question {turn}"),
                     turn,
                     forked_of: None,
+                    mentions: Vec::new(),
                 }),
                 vec![thread("t1"), message(&format!("m{}", turn * 2 - 1))],
             ))
@@ -69,6 +70,7 @@ fn conversation_store() -> (GraphStore, u64) {
                     content: format!("answer {turn}"),
                     turn,
                     forked_of: None,
+                    mentions: Vec::new(),
                 }),
                 vec![thread("t1"), message(&format!("m{}", turn * 2))],
             ))
@@ -218,6 +220,7 @@ fn forked_thread_projection_preserves_bindings_and_links_back() {
                 content: "question 1".to_owned(),
                 turn: 1,
                 forked_of: Some(message("m1")),
+                mentions: Vec::new(),
             }),
             vec![fork.clone(), message("m1")],
         ))

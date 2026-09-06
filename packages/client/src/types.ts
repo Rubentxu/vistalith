@@ -205,6 +205,8 @@ export interface ThreadMessage {
   turn: number;
   /** Original message identity when this item was copied by a fork. */
   forked_of?: string | null;
+  /** Semantic subjects mentioned via `@ns:kind:id` (VIS-CHAT-004). */
+  mentions?: string[];
 }
 
 export interface ThreadView {
@@ -217,7 +219,21 @@ export interface ThreadReply {
   message: string;
   turn: number;
   content: string;
+  /** Model that actually answered (`provider/model`). */
+  model?: string;
+  /** Resolved `@ns:kind:id` mentions from the user message. */
+  mentions?: string[];
+  /** Mention refs that did not resolve to existing subjects. */
+  unresolved_mentions?: string[];
   usage: ModelUsage;
+}
+
+/** Per-turn chat overrides (slice 23, V5). */
+export interface SendMessageOptions {
+  /** `provider/model`; must share the server's running provider. */
+  model?: string;
+  /** Agent id: its instructions + model drive the turn. */
+  agent?: string;
 }
 
 // --- Fork / diff / time travel (SPEC-011) ------------------------------------

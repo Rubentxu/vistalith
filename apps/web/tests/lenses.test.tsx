@@ -198,6 +198,111 @@ describe("ChatPanel", () => {
 
     expect(screen.getByText("hi there")).toBeInTheDocument();
   });
+
+  it("sends model/agent overrides and renders mention chips (slice 23)", async () => {
+    let threadView = {
+      thread: { thread: "agentic:thread:t9", title: "chat y", turns: 1 },
+      messages: [
+        {
+          message: "m1",
+          role: "user",
+          content: "check @arch:system:ledger",
+          turn: 1,
+          mentions: ["arch:system:ledger"],
+        },
+        { message: "m2", role: "assistant", content: "reviewed", turn: 1 },
+      ],
+    };
+    let sentBody: Record<string, unknown> = {};
+    const client = chatClient([
+      [
+        "GET /threads",
+        {
+          threads: [{ thread: "agentic:thread:t9", title: "chat y", turns: 1 }],
+        },
+      ],
+      [
+        "GET /agents",
+        {
+          agents: [
+            {
+              agent: "agentic:agent:rev1",
+              role: "reviewer",
+              instructions: "be thorough",
+              tools: [],
+            },
+          ],
+        },
+      ],
+      ["POST /threads", { thread: "agentic:thread:t9" }, 201],
+      ["GET /threads/t9", () => threadView],
+      [
+        "POST /threads/t9/messages/stream",
+        () => {
+          threadView = {
+            thread: { thread: "agentic:thread:t9", title: "chat y", turns: 2 },
+            messages: [
+              ...threadView.messages,
+              {
+                message: "m3",
+                role: "user",
+                content: "please review",
+                turn: 2,
+              },
+              { message: "m4", role: "assistant", content: "done", turn: 2 },
+            ],
+          };
+          return [
+            `event: done\ndata: ${JSON.stringify({
+              turn: 2,
+              message: "agentic:message:m4",
+              content: "done",
+              model: "fake/custom-3",
+              mentions: ["arch:system:ledger"],
+              unresolved_mentions: [],
+              usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+            })}\n\n`,
+          ];
+        },
+      ],
+    ]);
+    // capture the streamed body via a wrapper around fetch
+    const rawFetch = (client as unknown as { fetchImpl: typeof fetch })
+      .fetchImpl;
+    const wrapped: typeof fetch = (input, init) => {
+      if (String(input).endsWith("/stream") && init?.body) {
+        sentBody = JSON.parse(String(init.body));
+      }
+      return rawFetch(input, init);
+    };
+    (client as unknown as { fetchImpl: typeof fetch }).fetchImpl = wrapped;
+
+    render(<ChatPanel client={client} />);
+    await waitFor(() => screen.getByText("chat y"));
+
+    // open the thread (send requires an active thread)
+    fireEvent.click(screen.getByText("chat y"));
+    await waitFor(() => screen.getByText("check @arch:system:ledger"));
+
+    // selector: pick the agent persona and a model override
+    fireEvent.change(screen.getByLabelText("model override"), {
+      target: { value: "fake/custom-3" },
+    });
+    fireEvent.change(screen.getByLabelText("agent persona"), {
+      target: { value: "rev1" },
+    });
+    fireEvent.change(screen.getByLabelText("chat message"), {
+      target: { value: "please review" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => screen.getByText("done"));
+
+    expect(sentBody.model).toBe("fake/custom-3");
+    expect(sentBody.agent).toBe("rev1");
+
+    // mention chips render on the user message (identity, not prose)
+    await waitFor(() => screen.getByText("@arch:system:ledger"));
+  });
 });
 
 describe("ChatPanel fork (SPEC-011)", () => {

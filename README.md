@@ -41,6 +41,7 @@ built and changed. The full planning baseline lives in
 | 20 | Excalidraw semantic bindings — durable shape→subject bindings keyed by content, never by renderer shape ids (SPK-009, ADR-014) | done |
 | 21 | Workflow/agent lens — React Flow + ELK with off-main-thread layout at 1k/10k nodes and no-re-layout live status (SPK-010, ADR-015) | done |
 | 22 | MCP remote auth — bearer/header credentials (inline or env-referenced) on Streamable HTTP, redacted status, reconnect re-authenticates (SPK-007 **closed**) | done |
+| 23 | Semantic chat mentions (`@ns:kind:id` → `mentions` edges, fork-preserved) + per-turn model/agent selector in chat (VIS-CHAT-004, V5) | done |
 
 ## Normative baseline decisions
 
@@ -221,7 +222,11 @@ time travel), `GET /diff?from=A[&to=B]` (structural graph diff),
 `GET /subjects`, `GET /subjects/{namespace}/{kind}/{id}`, `GET|POST /events`,
 `POST /patches` (applied → `200`, rejected → `409`; rejections are durable
 events), `POST|GET /threads`, `GET /threads/{id}`,
-`POST /threads/{id}/messages` (one provider turn per message),
+`POST /threads/{id}/messages` (one provider turn per message; the body may
+pick a `model` (`provider/model`, same running provider) or ride an `agent`
+definition — its instructions become the system prompt and its model the
+target; `@ns:kind:id` references in the content are resolved into durable
+`mentions` graph edges, with unknown refs reported, never bound),
 `POST /threads/{id}/messages/stream` (the same turn over Server-Sent
 Events: `delta` frames while the model streams, a terminal `done` frame
 with the durable coordinates),
@@ -322,7 +327,11 @@ Excalidraw scene, paste/edit it, import it back as durable bindings
 The first pull-up candidate — the deterministic replay digest — is
 submitted and reviewed in
 [`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).
-The web chat streams assistant turns live (deltas render as they arrive).
+The web chat streams assistant turns live (deltas render as they arrive)
+and has a per-thread **model / agent selector**: pick a model override or
+an agent persona, and `@subject` mentions render as identity chips — each
+mention is a durable `mentions` edge feeding context views, impact and
+why-paths.
 The web client has four lenses over the same identities: **Graph**
 (subjects/edges, with a time-travel selector and structural diff when
 viewing a past revision), **C4** (projected view — with a LikeC4

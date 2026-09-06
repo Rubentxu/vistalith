@@ -433,3 +433,173 @@ async fn thread_fork_diff_and_time_travel_over_http() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+// --- Semantic mentions + model/agent overrides (slice 23, VIS-CHAT-004) ------
+
+#[tokio::test]
+async fn chat_messages_mention_subjects_and_can_override_the_model() {
+    let app = router(AppState::new(vistalith_graph::GraphStore::new()));
+
+    // an architecture subject to mention (durable event)
+    let (status, _) = call(
+        app.clone(),
+        Request::post("/events")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "event_id": "01990000-0000-7000-8000-00000000d001",
+                    "actor": "test:mentions",
+                    "timestamp": "2026-09-06T10:00:00Z",
+                    "subjects": [{ "namespace": "arch", "kind": "system", "id": "checkout" }],
+                    "correlation_id": "01990000-0000-7000-9000-00000000d001",
+                    "type": "subject-defined",
+                    "payload": {
+                        "subject": { "namespace": "arch", "kind": "system", "id": "checkout" },
+                        "authority": "authoritative",
+                        "provenance": { "source": "test:mentions" },
+                        "properties": { "name": "Checkout" }
+                    }
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, thread_body) = call(
+        app.clone(),
+        Request::post("/threads")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "title": "mentions" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let thread = thread_body["thread"]
+        .as_str()
+        .expect("thread identity")
+        .to_owned();
+    let thread_id = thread.rsplit(':').next().unwrap().to_owned();
+
+    // mention an existing AND a non-existing subject; override the model
+    let (status, reply) = call(
+        app.clone(),
+        Request::post(format!("/threads/{thread_id}/messages"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{ "content": "check @arch:system:checkout and @arch:system:ghost",
+                     "model": "fake/custom-7" }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reply["model"], "fake/custom-7");
+    let mentions = reply["mentions"].as_array().unwrap();
+    assert_eq!(mentions.len(), 1);
+    assert_eq!(mentions[0], "arch:system:checkout");
+    assert_eq!(
+        reply["unresolved_mentions"].as_array().unwrap().len(),
+        1
+    );
+
+    // the thread view exposes the mentions on the user message
+    let (_, view) = call(
+        app.clone(),
+        Request::get(format!("/threads/{thread_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let user_message = view["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "user")
+        .expect("user message");
+    assert_eq!(
+        user_message["mentions"].as_array().unwrap().len(),
+        1,
+        "mention edges are graph facts, visible in the thread view"
+    );
+
+    // a foreign provider is rejected at the boundary
+    let (status, error) = call(
+        app.clone(),
+        Request::post(format!("/threads/{thread_id}/messages"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{ "content": "hi", "model": "openai/gpt-x" }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(error["error"].as_str().unwrap().contains("not available"));
+
+    // an unknown agent is a 404
+    let (status, _) = call(
+        app,
+        Request::post(format!("/threads/{thread_id}/messages"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "content": "hi", "agent": "ghost" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn chat_can_ride_an_agent_definition() {
+    let app = router(AppState::new(vistalith_graph::GraphStore::new()));
+    let (status, thread_body) = call(
+        app.clone(),
+        Request::post("/threads")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "title": "agent chat" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let thread_id = thread_body["thread"]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    let (status, agent_body) = call(
+        app.clone(),
+        Request::post("/agents")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{ "role": "reviewer",
+                     "instructions": "review everything twice", "model": "fake/custom-3" }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let agent_id = agent_body["agent"]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    let (status, reply) = call(
+        app,
+        Request::post(format!("/threads/{thread_id}/messages"))
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                r#"{{ "content": "please review", "agent": "{agent_id}" }}"#
+            )))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // the agent's model drove the turn
+    assert_eq!(reply["model"], "fake/custom-3");
+}

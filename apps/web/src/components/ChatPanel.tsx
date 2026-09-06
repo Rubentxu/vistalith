@@ -1,4 +1,5 @@
 import type {
+  AgentInfo,
   ThreadMessage,
   ThreadSummary,
   VistalithClient,
@@ -29,6 +30,10 @@ export function ChatPanel({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // V5 selector: model override (provider/model) and agent persona
+  const [model, setModel] = useState("");
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [agentId, setAgentId] = useState("");
 
   const reloadThreads = useCallback(async () => {
     try {
@@ -41,6 +46,13 @@ export function ChatPanel({
   useEffect(() => {
     void reloadThreads();
   }, [reloadThreads]);
+
+  useEffect(() => {
+    client
+      .agents()
+      .then((list) => setAgents(list))
+      .catch(() => setAgents([]));
+  }, [client]);
 
   const openThread = useCallback(
     async (identity: string) => {
@@ -94,29 +106,37 @@ export function ChatPanel({
     ]);
     try {
       // Streamed turn: deltas render live; the refetch reconciles with the
-      // durable state.
-      await client.sendMessageStream(threadIdOf(activeThread), content, {
-        onDelta: (delta) => {
-          setMessages((current) => {
-            const last = current.at(-1);
-            if (last && last.message === "streaming") {
+      // durable state. Model/agent overrides travel with the message.
+      await client.sendMessageStream(
+        threadIdOf(activeThread),
+        content,
+        {
+          onDelta: (delta) => {
+            setMessages((current) => {
+              const last = current.at(-1);
+              if (last && last.message === "streaming") {
+                return [
+                  ...current.slice(0, -1),
+                  { ...last, content: last.content + delta },
+                ];
+              }
               return [
-                ...current.slice(0, -1),
-                { ...last, content: last.content + delta },
+                ...current,
+                {
+                  message: "streaming",
+                  role: "assistant",
+                  content: delta,
+                  turn: nextTurn,
+                },
               ];
-            }
-            return [
-              ...current,
-              {
-                message: "streaming",
-                role: "assistant",
-                content: delta,
-                turn: nextTurn,
-              },
-            ];
-          });
+            });
+          },
         },
-      });
+        {
+          ...(model.trim() ? { model: model.trim() } : {}),
+          ...(agentId ? { agent: agentId } : {}),
+        },
+      );
       onGraphChanged?.();
       const view = await client.thread(threadIdOf(activeThread));
       setMessages(view.messages);
@@ -189,6 +209,13 @@ export function ChatPanel({
                 ) : null}
               </span>
               <p>{message.content}</p>
+              {message.mentions && message.mentions.length > 0 ? (
+                <p className="chat-mentions">
+                  {message.mentions.map((identity) => (
+                    <code key={identity}>@{identity}</code>
+                  ))}
+                </p>
+              ) : null}
             </div>
           ))}
           {messages.length === 0 ? (
@@ -199,6 +226,32 @@ export function ChatPanel({
         </div>
 
         {error ? <p className="chat-error">{error}</p> : null}
+
+        <div className="chat-selector" data-testid="chat-selector">
+          <input
+            value={model}
+            placeholder="model override (provider/model, optional)"
+            aria-label="model override"
+            disabled={!activeThread || busy}
+            onChange={(event) => setModel(event.target.value)}
+          />
+          <select
+            aria-label="agent persona"
+            value={agentId}
+            disabled={!activeThread || busy}
+            onChange={(event) => setAgentId(event.target.value)}
+          >
+            <option value="">plain assistant</option>
+            {agents.map((agent) => {
+              const id = agent.agent.split(":").at(-1) ?? agent.agent;
+              return (
+                <option key={agent.agent} value={id}>
+                  agent: {agent.role}
+                </option>
+              );
+            })}
+          </select>
+        </div>
 
         <form
           className="chat-composer"

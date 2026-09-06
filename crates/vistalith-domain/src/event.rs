@@ -151,6 +151,13 @@ pub struct MessageAppended {
     /// ordinary messages, so older logs stay readable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_of: Option<SubjectRef>,
+    /// Semantic subjects mentioned in the content (`@ns:kind:id`,
+    /// VIS-CHAT-004): projected as `mentions` edges from the message, so a
+    /// chat mention is a graph fact feeding context views, impact and
+    /// why-paths. Forks carry them to the copied message. All targets must
+    /// exist when the event is projected. Absent on older logs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentions: Vec<SubjectRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

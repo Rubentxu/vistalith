@@ -39,6 +39,70 @@ pub struct ThreadReply {
     pub content: String,
     pub model: vistalith_domain::ModelDescriptor,
     pub usage: ModelUsage,
+    /// Semantic subjects the USER message mentioned via `@ns:kind:id`
+    /// (VIS-CHAT-004) — resolved identities only; unknown refs are
+    /// reported in `unresolved_mentions` and never bound.
+    pub mentions: Vec<SubjectRef>,
+    pub unresolved_mentions: Vec<String>,
+}
+
+/// Per-turn overrides (slice 23, V5): a chat message may pick a model
+/// (`provider/model`, must share the server's provider) and/or ride on an
+/// agent definition (its instructions become the system prompt, its model
+/// the target). `None` fields keep the engine defaults.
+#[derive(Debug, Clone, Default)]
+pub struct TurnOverrides {
+    pub model: Option<vistalith_domain::ModelDescriptor>,
+    pub system: Option<String>,
+}
+
+/// Parses `@namespace:kind:id` mention references out of message content
+/// (VIS-CHAT-004). Segments accept the SubjectRef identifier charset
+/// (`[a-zA-Z0-9_-]`); duplicates are removed preserving first occurrence.
+/// Parsing is purely lexical — existence is the caller's concern.
+pub fn parse_mention_refs(content: &str) -> Vec<SubjectRef> {
+    const IDENT: fn(char) -> bool =
+        |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+
+    fn read_segment(token: &str) -> Option<(&str, &str)> {
+        let end = token
+            .char_indices()
+            .find(|(_, c)| !IDENT(*c))
+            .map(|(index, _)| index)
+            .unwrap_or(token.len());
+        let (segment, rest) = token.split_at(end);
+        if segment.is_empty() {
+            None
+        } else {
+            Some((segment, rest))
+        }
+    }
+
+    let mut refs = Vec::new();
+    for (at_index, _) in content.match_indices('@') {
+        let token = &content[at_index + 1..];
+        let Some((namespace, rest)) = read_segment(token) else {
+            continue;
+        };
+        let Some(rest) = rest.strip_prefix(':') else {
+            continue;
+        };
+        let Some((kind, rest)) = read_segment(rest) else {
+            continue;
+        };
+        let Some(rest) = rest.strip_prefix(':') else {
+            continue;
+        };
+        let Some((id, _)) = read_segment(rest) else {
+            continue;
+        };
+        if let Ok(reference) = SubjectRef::parse(&format!("{namespace}:{kind}:{id}"))
+            && !refs.contains(&reference)
+        {
+            refs.push(reference);
+        }
+    }
+    refs
 }
 
 /// Result of forking a thread (SPEC-011): the new durable thread, the turn
@@ -121,6 +185,24 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
         thread: &SubjectRef,
         content: impl Into<String>,
     ) -> Result<ThreadReply, ConversationError> {
+        self.send_user_message_opts(
+            store,
+            thread,
+            content,
+            TurnOverrides::default(),
+        )
+        .await
+    }
+
+    /// [`Self::send_user_message`] with per-turn overrides (model / system
+    /// prompt) and `@ns:kind:id` mention resolution on the user message.
+    pub async fn send_user_message_opts(
+        &self,
+        store: &mut GraphStore,
+        thread: &SubjectRef,
+        content: impl Into<String>,
+        overrides: TurnOverrides,
+    ) -> Result<ThreadReply, ConversationError> {
         let content = content.into();
         if content.trim().is_empty() {
             return Err(ConversationError::EmptyMessage);
@@ -130,14 +212,26 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
         }
 
         let turn = next_turn(store, thread);
-        self.append_message(store, thread, MessageRole::User, &content, turn)?;
+        let (mentions, unresolved_mentions) = {
+            let (resolved, unresolved) =
+                self.resolve_mentions(store, parse_mention_refs(&content));
+            (resolved, unresolved)
+        };
+        self.append_message(
+            store,
+            thread,
+            MessageRole::User,
+            &content,
+            turn,
+            mentions.clone(),
+        )?;
 
         // Turn loop: at most `MAX_TOOL_ROUNDS` tool-call rounds, then the
         // final text answer. Every executed call is a durable typed item.
         let mut rounds = 0usize;
         let mut total_usage = vistalith_domain::ModelUsage::default();
         loop {
-            let request = self.build_request(store, thread);
+            let request = self.build_request(store, thread, &overrides);
             let response = self.provider.complete(request).await?;
             total_usage.input_tokens += response.usage.input_tokens;
             total_usage.output_tokens += response.usage.output_tokens;
@@ -160,6 +254,7 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
                 MessageRole::Assistant,
                 &response.content,
                 turn,
+                Vec::new(),
             )?;
 
             store.append(self.event(
@@ -179,6 +274,8 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
                 content: response.content,
                 model,
                 usage: total_usage,
+                mentions,
+                unresolved_mentions,
             });
         }
     }
@@ -194,6 +291,26 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
         content: impl Into<String>,
         deltas: tokio::sync::mpsc::Sender<String>,
     ) -> Result<ThreadReply, ConversationError> {
+        self.send_user_message_streaming_opts(
+            store,
+            thread,
+            content,
+            deltas,
+            TurnOverrides::default(),
+        )
+        .await
+    }
+
+    /// [`Self::send_user_message_streaming`] with per-turn overrides and
+    /// `@ns:kind:id` mention resolution — identical durability.
+    pub async fn send_user_message_streaming_opts(
+        &self,
+        store: &mut GraphStore,
+        thread: &SubjectRef,
+        content: impl Into<String>,
+        deltas: tokio::sync::mpsc::Sender<String>,
+        overrides: TurnOverrides,
+    ) -> Result<ThreadReply, ConversationError> {
         let content = content.into();
         if content.trim().is_empty() {
             return Err(ConversationError::EmptyMessage);
@@ -203,7 +320,16 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
         }
 
         let turn = next_turn(store, thread);
-        self.append_message(store, thread, MessageRole::User, &content, turn)?;
+        let (mentions, unresolved_mentions) =
+            self.resolve_mentions(store, parse_mention_refs(&content));
+        self.append_message(
+            store,
+            thread,
+            MessageRole::User,
+            &content,
+            turn,
+            mentions.clone(),
+        )?;
 
         let mut rounds = 0usize;
         let mut total_usage = vistalith_domain::ModelUsage::default();
@@ -211,7 +337,7 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
             // Every round streams: deltas forward live; the terminal event
             // decides between a final answer and tool calls (which run and
             // loop, exactly like the non-streamed path).
-            let request = self.build_request(store, thread);
+            let request = self.build_request(store, thread, &overrides);
             let mut events = self.provider.stream_complete(request).await?;
             let mut finished: Option<(
                 String,
@@ -259,7 +385,14 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
             };
 
             let assistant_message =
-                self.append_message(store, thread, MessageRole::Assistant, &content, turn)?;
+                self.append_message(
+                    store,
+                    thread,
+                    MessageRole::Assistant,
+                    &content,
+                    turn,
+                    Vec::new(),
+                )?;
             store.append(self.event(
                 EventPayload::TurnCompleted(TurnCompleted {
                     thread: thread.clone(),
@@ -277,6 +410,8 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
                 content,
                 model,
                 usage: total_usage,
+                mentions,
+                unresolved_mentions,
             });
         }
     }
@@ -344,6 +479,7 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
                         role: appended.role,
                         content: appended.content.clone(),
                         turn: appended.turn,
+                        mentions: appended.mentions.clone(),
                     });
                 }
                 EventPayload::ToolInvoked(invoked)
@@ -378,6 +514,7 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
                     role,
                     content,
                     turn,
+                    mentions,
                 } => {
                     let message = SubjectRef::new(
                         vistalith_domain::Namespace::Agentic,
@@ -393,6 +530,7 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
                             content,
                             turn,
                             forked_of: Some(original.clone()),
+                            mentions,
                         }),
                         vec![fork.clone(), original],
                     ))?;
@@ -445,10 +583,18 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
         })
     }
 
-    fn build_request(&self, store: &GraphStore, thread: &SubjectRef) -> ModelRequest {
+    fn build_request(
+        &self,
+        store: &GraphStore,
+        thread: &SubjectRef,
+        overrides: &TurnOverrides,
+    ) -> ModelRequest {
         ModelRequest {
-            model: self.provider.descriptor().clone(),
-            system: self.system.clone(),
+            model: overrides
+                .model
+                .clone()
+                .unwrap_or_else(|| self.provider.descriptor().clone()),
+            system: overrides.system.clone().or_else(|| self.system.clone()),
             messages: thread_history(store, thread),
             max_tokens: Some(1024),
             tools: self.tool_contracts(),
@@ -522,12 +668,16 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
                 MessageRole::Tool,
                 &serde_json::to_string(&output).unwrap_or_default(),
                 turn,
+                Vec::new(),
             )?;
             outputs.push(output);
         }
         Ok(outputs)
     }
 
+    /// Appends a message with its `@ns:kind:id` mentions (VIS-CHAT-004).
+    /// Mention targets must already exist in the graph — callers resolve
+    /// first via [`parse_mention_refs`] + [`Self::resolve_mentions`].
     fn append_message(
         &self,
         store: &mut GraphStore,
@@ -535,6 +685,7 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
         role: MessageRole,
         content: &str,
         turn: u64,
+        mentions: Vec<SubjectRef>,
     ) -> Result<SubjectRef, ConversationError> {
         let message = SubjectRef::new(
             vistalith_domain::Namespace::Agentic,
@@ -542,6 +693,8 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
             Uuid::now_v7().to_string(),
         )
         .expect("generated message id is valid");
+        let mut subjects = vec![thread.clone(), message.clone()];
+        subjects.extend(mentions.iter().cloned());
         store.append(self.event(
             EventPayload::MessageAppended(MessageAppended {
                 thread: thread.clone(),
@@ -550,10 +703,30 @@ impl<P: ModelProvider + Sync> ConversationEngine<P> {
                 content: content.to_owned(),
                 turn,
                 forked_of: None,
+                mentions,
             }),
-            vec![thread.clone(), message.clone()],
+            subjects,
         ))?;
         Ok(message)
+    }
+
+    /// Filters parsed mention refs down to the ones that exist in the
+    /// graph. Returns (resolved, unresolved raw strings).
+    fn resolve_mentions(
+        &self,
+        store: &GraphStore,
+        parsed: Vec<SubjectRef>,
+    ) -> (Vec<SubjectRef>, Vec<String>) {
+        let mut resolved = Vec::new();
+        let mut unresolved = Vec::new();
+        for reference in parsed {
+            if store.graph().subject(&reference).is_some() {
+                resolved.push(reference);
+            } else {
+                unresolved.push(reference.to_string());
+            }
+        }
+        (resolved, unresolved)
     }
 
     fn event(&self, payload: EventPayload, subjects: Vec<SubjectRef>) -> VEvent {
@@ -588,6 +761,7 @@ enum CopyItem {
         role: MessageRole,
         content: String,
         turn: u64,
+        mentions: Vec<SubjectRef>,
     },
     Tool {
         original: SubjectRef,

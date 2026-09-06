@@ -17,6 +17,7 @@ use std::sync::Arc as StdArc;
 
 use vistalith_agent_runtime::{
     ConversationEngine, ConversationError, FakeProvider, FrameError, FrameOutcome, FrameSpec,
+    TurnOverrides,
     GrantStore, McpManager, McpServerConfig, ModelProvider, RuntimeProvider, ToolRegistry,
     close_frame, draft_intent, finish_agent_run, frame_system_prompt,
     promote_intent_with_bridge, run_frame_turn, start_agent_frame, start_frame,
@@ -478,12 +479,19 @@ async fn get_thread(
         .children(&thread)
         .into_iter()
         .map(|node| {
+            let mentions: Vec<String> = store
+                .graph()
+                .outgoing(&node.subject)
+                .filter(|fact| fact.relation.kind.as_str() == "mentions")
+                .map(|fact| fact.relation.to.to_string())
+                .collect();
             serde_json::json!({
                 "message": node.subject.to_string(),
                 "role": node.properties.get("role").cloned().unwrap_or(serde_json::json!("user")),
                 "content": node.properties.get("content").cloned().unwrap_or(serde_json::json!("")),
                 "turn": node.properties.get("turn").cloned().unwrap_or(serde_json::json!(0)),
                 "forked_of": node.properties.get("forked_of").cloned(),
+                "mentions": mentions,
             })
         })
         .collect();
@@ -491,6 +499,66 @@ async fn get_thread(
         "thread": thread_summary(&store, &thread),
         "messages": messages,
     })))
+}
+
+/// Per-turn overrides (slice 23, V5): `model` picks `provider/model`
+/// within the running provider; `agent` rides an agent definition (its
+/// instructions become the system prompt, its model the target unless
+/// `model` overrides it).
+fn turn_overrides(
+    store: &vistalith_graph::GraphStore,
+    running: &vistalith_domain::ModelDescriptor,
+    body: &serde_json::Value,
+) -> Result<TurnOverrides, ApiError> {
+    let mut overrides = TurnOverrides::default();
+    let running = running.clone();
+    if let Some(raw) = body.get("model").and_then(|v| v.as_str()) {
+        let Some((provider, model)) = raw.split_once('/') else {
+            return Err(ApiError::bad_request(
+                "`model` must be `provider/model`".to_owned(),
+            ));
+        };
+        if !provider.eq_ignore_ascii_case(&running.provider) {
+            return Err(ApiError::bad_request(format!(
+                "model provider `{provider}` is not available (the server runs `{}`)",
+                running.provider
+            )));
+        }
+        overrides
+            .model
+            .get_or_insert_with(|| vistalith_domain::ModelDescriptor::new(running.provider.clone(), model.to_owned()));
+    }
+    if let Some(agent_id) = body.get("agent").and_then(|v| v.as_str()) {
+        let agent = SubjectRef::new(Namespace::Agentic, SubjectKind::Agent, agent_id.to_owned())
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+        let node = store.graph().subject(&agent).ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("unknown agent `{agent_id}`"),
+        })?;
+        let role = node
+            .properties
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("assistant");
+        let instructions = node
+            .properties
+            .get("instructions")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        overrides.system =
+            Some(format!("[agent: {role}] instructions: {instructions}"));
+        if overrides.model.is_none()
+            && let Some(model_raw) = node.properties.get("model").and_then(|v| v.as_str())
+            && let Some((provider, model)) = model_raw.split_once('/')
+            && provider.eq_ignore_ascii_case(&running.provider)
+        {
+            overrides.model = Some(vistalith_domain::ModelDescriptor::new(
+                running.provider.clone(),
+                model.to_owned(),
+            ));
+        }
+    }
+    Ok(overrides)
 }
 
 async fn post_thread_message(
@@ -506,8 +574,9 @@ async fn post_thread_message(
         .to_owned();
     let engine = state.engine();
     let mut store = state.store.write().await;
+    let overrides = turn_overrides(&store, state.runtime.descriptor(), &body)?;
     let reply = engine
-        .send_user_message(&mut store, &thread, content)
+        .send_user_message_opts(&mut store, &thread, content, overrides)
         .await?;
     tracing::info!(turn = reply.turn, thread = %thread, "turn completed");
     Ok(Json(serde_json::json!({
@@ -515,6 +584,9 @@ async fn post_thread_message(
         "message": reply.message.to_string(),
         "turn": reply.turn,
         "content": reply.content,
+        "model": reply.model.to_string(),
+        "mentions": reply.mentions.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+        "unresolved_mentions": reply.unresolved_mentions,
         "usage": {
             "input_tokens": reply.usage.input_tokens,
             "output_tokens": reply.usage.output_tokens,
@@ -543,8 +615,8 @@ async fn post_thread_message_stream(
         .ok_or_else(|| ApiError::bad_request("missing `content` string".to_owned()))?
         .to_owned();
 
-    // Fail fast (unknown thread) before the stream opens.
-    {
+    // Fail fast (unknown thread, bad overrides) before the stream opens.
+    let overrides = {
         let store = state.store.read().await;
         if store.graph().subject(&thread).is_none() {
             return Err(ApiError {
@@ -552,7 +624,8 @@ async fn post_thread_message_stream(
                 message: format!("unknown thread `{thread}`"),
             });
         }
-    }
+        turn_overrides(&store, state.runtime.descriptor(), &body)?
+    };
 
     let (frame_tx, frame_rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(32);
     let store = StdArc::clone(&state.store);
@@ -569,7 +642,13 @@ async fn post_thread_message_stream(
     tokio::spawn(async move {
         let mut store = store.write().await;
         let result = engine
-            .send_user_message_streaming(&mut store, &turn_thread, content, deltas_tx)
+            .send_user_message_streaming_opts(
+                &mut store,
+                &turn_thread,
+                content,
+                deltas_tx,
+                overrides,
+            )
             .await;
         let _ = result_tx.send(result.map_err(|e| e.to_string()));
     });
@@ -592,6 +671,9 @@ async fn post_thread_message_stream(
                         "turn": reply.turn,
                         "message": reply.message.to_string(),
                         "content": reply.content,
+                        "model": reply.model.to_string(),
+                        "mentions": reply.mentions.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+                        "unresolved_mentions": reply.unresolved_mentions,
                         "usage": {
                             "input_tokens": reply.usage.input_tokens,
                             "output_tokens": reply.usage.output_tokens,

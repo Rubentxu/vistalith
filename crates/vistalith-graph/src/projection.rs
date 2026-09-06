@@ -138,6 +138,30 @@ pub fn apply_event(
                     appended.thread, appended.message
                 )));
             }
+            // VIS-CHAT-004: `@ns:kind:id` mentions are graph facts — the
+            // message `mentions` each referenced subject (forks re-declare
+            // them for the copied message).
+            for mentioned in &appended.mentions {
+                if graph.node(mentioned).is_none() {
+                    return Err(ProjectionError::UnknownSubject(mentioned.to_string()));
+                }
+                let fact = RelationFact {
+                    relation: RelationRef::new(
+                        appended.message.clone(),
+                        RelationKind::Mentions,
+                        mentioned.clone(),
+                    )
+                    .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                    authority: AuthorityClass::Authoritative,
+                    provenance: event_provenance(event),
+                };
+                if !graph.declare_relation(fact, sequence) {
+                    return Err(ProjectionError::DuplicateRelation(format!(
+                        "{} mentions {}",
+                        appended.message, mentioned
+                    )));
+                }
+            }
         }
         EventPayload::TurnCompleted(turn) => {
             if graph.node(&turn.thread).is_none() {

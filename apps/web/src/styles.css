@@ -1315,3 +1315,33 @@ code {
   font-size: 0.7rem;
   margin: 0.3rem 0 0;
 }
+
+/* --- Chat selector + mention chips (slice 23, V5 / VIS-CHAT-004) --- */
+
+.chat-selector {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.chat-selector input,
+.chat-selector select {
+  font-size: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-mentions {
+  margin: 0.2rem 0 0;
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.chat-mentions code {
+  font-size: 0.65rem;
+  background: var(--surface-2, #1d2026);
+  border: 1px solid var(--border, #2a2d34);
+  border-radius: 3px;
+  padding: 0.05rem 0.25rem;
+}

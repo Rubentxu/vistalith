@@ -158,10 +158,14 @@ export class VistalithClient {
   }
 
   /** Sends a user message and waits for the completed turn. */
-  async sendMessage(id: string, content: string): Promise<ThreadReply> {
+  async sendMessage(
+    id: string,
+    content: string,
+    options: import("./types.js").SendMessageOptions = {},
+  ): Promise<ThreadReply> {
     return this.postJson<ThreadReply>(
       `/threads/${enc(id)}/messages`,
-      { content },
+      { content, ...options },
       { okStatus: 200, throwOnError: true },
     );
   }
@@ -175,13 +179,14 @@ export class VistalithClient {
     id: string,
     content: string,
     handlers: import("./types.js").StreamTurnHandlers = {},
+    options: import("./types.js").SendMessageOptions = {},
   ): Promise<void> {
     const response = await this.fetchImpl(
       `${this.baseUrl}/threads/${enc(id)}/messages/stream`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, ...options }),
       },
     );
     if (!response.body) {

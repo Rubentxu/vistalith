@@ -275,16 +275,19 @@ impl FakeProvider {
             output_tokens: 8,
             total_tokens: 8 + input_tokens,
         };
+        // The response reports the REQUEST's model: like a real provider,
+        // the answer names what actually answered — per-turn overrides
+        // (slice 23) are therefore observable offline.
         Ok(match step {
             FakeStep::Text(content) => ModelResponse {
                 content,
-                model: self.model.clone(),
+                model: request.model.clone(),
                 usage,
                 tool_calls: Vec::new(),
             },
             FakeStep::ToolCall { name, arguments } => ModelResponse {
                 content: String::new(),
-                model: self.model.clone(),
+                model: request.model.clone(),
                 usage,
                 tool_calls: vec![ToolCallRequest { name, arguments }],
             },
@@ -466,8 +469,10 @@ impl ModelProvider for RigProvider {
             })
             .collect();
 
+        // The request's descriptor wins: per-turn model overrides (slice
+        // 23) switch the rig completion target while the provider stays.
         let completion_request = rig_core::completion::CompletionRequest {
-            model: Some(self.model.model.clone()),
+            model: Some(request.model.model.clone()),
             preamble: None,
             chat_history: history,
             documents: Vec::new(),
@@ -552,8 +557,10 @@ impl ModelProvider for RigProvider {
                 parameters: tool.parameters.clone(),
             })
             .collect();
+        // The request's descriptor wins: per-turn model overrides (slice
+        // 23) switch the rig completion target while the provider stays.
         let completion_request = rig_core::completion::CompletionRequest {
-            model: Some(self.model.model.clone()),
+            model: Some(request.model.model.clone()),
             preamble: None,
             chat_history: history,
             documents: Vec::new(),

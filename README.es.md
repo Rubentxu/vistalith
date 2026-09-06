@@ -42,6 +42,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 20 | Bindings semánticos Excalidraw — bindings durables forma→sujeto claveados por contenido, nunca por ids de forma del renderer (SPK-009, ADR-014) | hecho |
 | 21 | Lente workflow/agent — React Flow + ELK con layout off-main-thread a 1k/10k nodos y estados en vivo sin re-layout (SPK-010, ADR-015) | hecho |
 | 22 | Auth MCP remota — credenciales bearer/header (inline o por env) en Streamable HTTP, estado redactado, reconnect re-autentica (SPK-007 **cerrado**) | hecho |
+| 23 | Menciones semánticas en chat (`@ns:kind:id` → aristas `mentions`, preservadas en forks) + selector de modelo/agente por turno en el chat (VIS-CHAT-004, V5) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -232,7 +233,12 @@ opcional para time travel), `GET /diff?from=A[&to=B]` (diff estructural del
 grafo), `GET /subjects`, `GET /subjects/{namespace}/{kind}/{id}`,
 `GET|POST /events`, `POST /patches` (aplicado → `200`, rechazado → `409`;
 los rechazos son eventos durables), `POST|GET /threads`, `GET /threads/{id}`,
-`POST /threads/{id}/messages` (un turno de proveedor por mensaje),
+`POST /threads/{id}/messages` (un turno de proveedor por mensaje; el body
+puede elegir `model` (`proveedor/modelo`, mismo proveedor en marcha) o
+montarse sobre un `agent` — sus instrucciones se convierten en system
+prompt y su modelo en el objetivo; las referencias `@ns:kind:id` del
+contenido se resuelven en aristas `mentions` durables, y las refs
+desconocidas se reportan, nunca se vinculan),
 `POST /threads/{id}/messages/stream` (el mismo turno sobre Server-Sent
 Events: frames `delta` mientras el modelo genera, y un frame terminal
 `done` con las coordenadas durables),
@@ -342,7 +348,12 @@ Excalidraw, pégala edítala, e impórtala de vuelta como bindings durables
 El primer candidato de pull-up — el digest de replay determinista — está
 enviado y revisado en
 [`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).
-El chat web muestra los turnos del asistente en vivo (los deltas se renderizan a medida que llegan).
+El chat web muestra los turnos del asistente en vivo (los deltas se
+renderizan a medida que llegan) y tiene un **selector de modelo/agente**
+por hilo: elige una sobrescritura de modelo o una persona de agente, y las
+menciones `@sujeto` se renderizan como chips de identidad — cada mención
+es una arista `mentions` durable que alimenta vistas de contexto, impacto
+y why-paths.
 El cliente web tiene cuatro lentes sobre las mismas identidades: **Graph**
 (sujetos/aristas, con selector de time travel y diff estructural al ver una
 revisión pasada), **C4** (vista proyectada — con una sección de round-trip

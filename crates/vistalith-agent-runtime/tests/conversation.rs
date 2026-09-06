@@ -246,3 +246,152 @@ async fn runtime_provider_enum_dispatches() {
         .unwrap();
     assert_eq!(response.content, "dispatched");
 }
+
+// --- Semantic mentions + per-turn overrides (slice 23, VIS-CHAT-004, V5) ---
+
+fn define_arch(store: &mut GraphStore, id: &str) -> SubjectRef {
+    use vistalith_domain::{AuthorityClass, EventPayload, Provenance, SubjectDefined, VEvent};
+    let subject = SubjectRef::new(Namespace::Arch, SubjectKind::System, id.to_owned()).unwrap();
+    store
+        .append(VEvent {
+            event_id: uuid::Uuid::now_v7(),
+            actor: vistalith_domain::Actor::new("test:mentions").unwrap(),
+            timestamp: time::OffsetDateTime::now_utc(),
+            subjects: vec![subject.clone()],
+            correlation_id: uuid::Uuid::now_v7(),
+            causation_id: None,
+            trace_id: None,
+            payload: EventPayload::SubjectDefined(SubjectDefined {
+                subject: subject.clone(),
+                authority: AuthorityClass::Authoritative,
+                provenance: Provenance::new("test:mentions").unwrap(),
+                properties: std::collections::BTreeMap::from([(
+                    "name".to_owned(),
+                    serde_json::json!(id),
+                )]),
+            }),
+        })
+        .unwrap();
+    subject
+}
+
+fn mentions_of(store: &GraphStore, message: &SubjectRef) -> Vec<String> {
+    store
+        .graph()
+        .outgoing(message)
+        .filter(|fact| fact.relation.kind.as_str() == "mentions")
+        .map(|fact| fact.relation.to.to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn chat_mentions_bind_existing_subjects_and_report_unknown() {
+    let provider = FakeProvider::repeating("seen it");
+    let engine = ConversationEngine::new(RuntimeProvider::Fake(provider));
+    let mut store = GraphStore::new();
+    let thread = engine.start_thread(&mut store, "mentions thread").unwrap();
+    let checkout = define_arch(&mut store, "checkout");
+
+    let reply = engine
+        .send_user_message_opts(
+            &mut store,
+            &thread,
+            "look at @arch:system:checkout and @arch:system:ghost please",
+            vistalith_agent_runtime::TurnOverrides::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(reply.mentions, vec![checkout.clone()]);
+    assert_eq!(reply.unresolved_mentions, vec!["arch:system:ghost"]);
+    // the USER message carries the mentions edge; the assistant reply none
+    let user_message = store
+        .graph()
+        .children(&reply.thread)
+        .into_iter()
+        .find(|n| {
+            n.properties.get("role").and_then(|r| r.as_str()) == Some("user")
+                && n.properties.get("turn").and_then(|t| t.as_u64()) == Some(reply.turn)
+        })
+        .expect("user message")
+        .subject
+        .clone();
+    let mentions = mentions_of(&store, &user_message);
+    assert_eq!(mentions, vec!["arch:system:checkout".to_owned()]);
+    assert!(mentions_of(&store, &store.graph().children(&reply.thread)
+        .into_iter()
+        .find(|n| n.properties.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+        .expect("assistant message")
+        .subject).is_empty());
+}
+
+#[tokio::test]
+async fn fork_carries_mentions_to_the_copied_message() {
+    let provider = FakeProvider::repeating("ok");
+    let engine = ConversationEngine::new(RuntimeProvider::Fake(provider));
+    let mut store = GraphStore::new();
+    engine.start_thread(&mut store, "fork mentions").unwrap();
+    let checkout = define_arch(&mut store, "checkout");
+    let thread = thread_subject(&store);
+    engine
+        .send_user_message_opts(
+            &mut store,
+            &thread,
+            "see @arch:system:checkout",
+            vistalith_agent_runtime::TurnOverrides::default(),
+        )
+        .await
+        .unwrap();
+
+    let forked = engine.fork_thread(&mut store, &thread, None, None).unwrap();
+    let copied = store
+        .graph()
+        .children(&forked.fork)
+        .into_iter()
+        .find(|n| n.properties.get("role").and_then(|r| r.as_str()) == Some("user"))
+        .expect("copied user message")
+        .subject
+        .clone();
+    assert_eq!(
+        mentions_of(&store, &copied),
+        vec![checkout.to_string()],
+        "fork must preserve semantic mention bindings"
+    );
+}
+
+#[tokio::test]
+async fn turn_overrides_switch_the_model_and_system() {
+    let provider = FakeProvider::repeating("ok");
+    let engine = ConversationEngine::new(RuntimeProvider::Fake(provider));
+    let mut store = GraphStore::new();
+    let thread = engine.start_thread(&mut store, "overrides").unwrap();
+
+    let reply = engine
+        .send_user_message_opts(
+            &mut store,
+            &thread,
+            "hello",
+            vistalith_agent_runtime::TurnOverrides {
+                model: Some(vistalith_domain::ModelDescriptor::new("fake", "custom-9")),
+                system: Some("you are a bench agent".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+
+    // the reply names the model that actually answered
+    assert_eq!(reply.model.to_string(), "fake/custom-9");
+}
+
+#[test]
+fn parse_mention_refs_is_lexical_and_dedupes() {
+    use vistalith_agent_runtime::parse_mention_refs;
+    let refs = parse_mention_refs(
+        "hi @arch:system:a and @arch:system:a again, plus @arch:system:b. Bad: @nodots and @only:two",
+    );
+    let rendered: Vec<String> = refs.iter().map(|r| r.to_string()).collect();
+    assert_eq!(
+        rendered,
+        vec!["arch:system:a".to_owned(), "arch:system:b".to_owned()]
+    );
+}
