@@ -339,6 +339,51 @@ export interface C4View {
   relationships: C4Relationship[];
 }
 
+// --- LikeC4 round-trip (SPK-008) ---------------------------------------------
+
+export interface C4ElementChange {
+  identity: string;
+  level: "system" | "container" | "component";
+  changes: Array<{
+    key: string;
+    from?: unknown;
+    to?: unknown;
+  }>;
+}
+
+export interface C4RelationshipChange {
+  source: string;
+  target: string;
+  kind: string;
+  changes: Array<{
+    key: string;
+    from?: unknown;
+    to?: unknown;
+  }>;
+}
+
+/** Architecture-flavored diff between two revisions of the C4 projection. */
+export interface C4Diff {
+  from_revision: number;
+  to_revision: number;
+  added_elements: C4Element[];
+  removed_elements: C4Element[];
+  changed_elements: C4ElementChange[];
+  added_relationships: C4Relationship[];
+  removed_relationships: C4Relationship[];
+  changed_relationships: C4RelationshipChange[];
+}
+
+/** Report of a LikeC4 DSL import (durable events it produced, if any). */
+export interface LikeC4ImportReport {
+  defined_subjects: SubjectRef[];
+  updated_subjects: SubjectRef[];
+  unchanged_subjects: SubjectRef[];
+  deprecated_subjects: SubjectRef[];
+  declared_relations: Array<{ from: SubjectRef; kind: string; to: SubjectRef }>;
+  skipped_relations: Array<{ from: SubjectRef; kind: string; to: SubjectRef }>;
+}
+
 // --- Identity helpers -------------------------------------------------------
 
 /** Renders the stable identity string `namespace:kind:id` (never revision). */

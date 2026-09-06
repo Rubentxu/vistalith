@@ -19,7 +19,7 @@ pub enum C4Level {
     Component,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct C4Element {
     /// Stable SubjectRef identity — the C4 lens maps renderer ids to this.
     pub identity: String,
@@ -30,7 +30,7 @@ pub struct C4Element {
     pub deprecated: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct C4Relationship {
     pub source: String,
     pub target: String,
@@ -38,7 +38,7 @@ pub struct C4Relationship {
     pub authority: vistalith_domain::AuthorityClass,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct C4View {
     pub revision: u64,
     pub systems: Vec<C4Element>,

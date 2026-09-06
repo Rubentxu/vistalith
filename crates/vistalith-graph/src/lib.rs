@@ -13,6 +13,7 @@ mod c4;
 mod context;
 mod decisions;
 mod diff;
+mod likec4;
 mod why;
 mod digest;
 mod graph;
@@ -39,6 +40,10 @@ pub use c4::{
 };
 pub use diff::{
     GraphDiff, PropertyChange, RelationChange, SubjectChange, diff_graphs,
+};
+pub use likec4::{
+    C4Diff, C4ElementChange, C4RelationshipChange, LikeC4Element, LikeC4Error, LikeC4ImportReport,
+    LikeC4Model, LikeC4Relationship, c4_diff, import_likec4, likec4_source, parse_likec4,
 };
 pub use digest::{canonical_graph_json, graph_digest};
 pub use graph::{SemanticWorldGraph, SubjectNode};

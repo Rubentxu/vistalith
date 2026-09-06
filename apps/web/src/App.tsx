@@ -8,6 +8,7 @@ import { FramesPanel } from "./components/FramesPanel.tsx";
 import { GraphView } from "./components/GraphView.tsx";
 import { ImpactPanel } from "./components/ImpactPanel.tsx";
 import { IntentComposer } from "./components/IntentComposer.tsx";
+import { LikeC4Panel } from "./components/LikeC4Panel.tsx";
 import { SubjectDetails } from "./components/SubjectDetails.tsx";
 import { SubjectList } from "./components/SubjectList.tsx";
 import { ThinkingPanel } from "./components/ThinkingPanel.tsx";
@@ -142,6 +143,13 @@ export function App() {
           </section>
           <aside className="panel">
             <SubjectDetails graph={graph} />
+            <LikeC4Panel
+              client={client}
+              onGraphChanged={() => {
+                void queryClient.invalidateQueries({ queryKey: ["graph"] });
+                void queryClient.invalidateQueries({ queryKey: ["c4"] });
+              }}
+            />
             <IntentComposer
               client={client}
               selected={selected}

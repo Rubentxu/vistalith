@@ -1143,3 +1143,67 @@ code {
   font-size: 0.8rem;
   width: 100%;
 }
+
+/* --- LikeC4 round-trip (slice 19, SPK-008) --- */
+
+.likec4-panel h3 {
+  margin: 0.6rem 0 0.3rem;
+  font-size: 0.85rem;
+}
+
+.likec4-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.likec4-actions label {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.likec4-actions input {
+  width: 5rem;
+}
+
+.likec4-source {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  background: var(--surface-2, #16181d);
+  color: var(--text, #e6e6e6);
+  border: 1px solid var(--border, #2a2d34);
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.likec4-report {
+  font-size: 0.75rem;
+  margin: 0.3rem 0;
+}
+
+.likec4-error {
+  color: #ff6b6b;
+  font-size: 0.75rem;
+}
+
+.likec4-diff ul {
+  list-style: none;
+  padding-left: 0;
+  font-size: 0.75rem;
+}
+
+.likec4-diff .diff-added {
+  color: #7bd88f;
+}
+
+.likec4-diff .diff-removed {
+  color: #ff6b6b;
+}
+
+.likec4-diff .diff-changed {
+  color: #ffd866;
+}

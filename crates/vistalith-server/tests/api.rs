@@ -196,3 +196,151 @@ async fn browser_clients_can_preflight_the_api() {
         "*"
     );
 }
+
+// --- LikeC4 round-trip (slice 19, SPK-008) ------------------------------------
+
+async fn call_text(app: Router, request: Request<Body>) -> (StatusCode, String, String) {
+    let response = app.oneshot(request).await.expect("in-memory service");
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .expect("content type")
+        .to_str()
+        .expect("ascii header")
+        .to_owned();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (status, content_type, String::from_utf8(bytes.to_vec()).expect("utf-8"))
+}
+
+#[tokio::test]
+async fn likec4_export_embeds_identity_and_reimport_is_a_noop() {
+    let app = app();
+    let (status, _, _) = call_text(
+        app.clone(),
+        Request::post("/events")
+            .header("content-type", "application/json")
+            .body(Body::from(SAMPLE_EVENT))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // export: the SubjectRef travels inside the DSL metadata
+    let (status, content_type, dsl) = call_text(
+        app.clone(),
+        Request::get("/views/c4/likec4").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/plain"));
+    assert!(dsl.contains("vistalith 'arch:system:vistalith'"));
+    assert!(dsl.contains("system vistalith \"Vistalith\""));
+
+    // re-import of the untouched export changes nothing
+    let (status, json) = call(
+        app.clone(),
+        Request::post("/views/c4/likec4")
+            .header("content-type", "text/plain")
+            .body(Body::from(dsl.clone()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["defined_subjects"].as_array().unwrap().len(), 0);
+    assert_eq!(json["updated_subjects"].as_array().unwrap().len(), 0);
+    assert_eq!(json["unchanged_subjects"].as_array().unwrap().len(), 1);
+    assert_eq!(json["deprecated_subjects"].as_array().unwrap().len(), 0);
+    assert_eq!(json["declared_relations"].as_array().unwrap().len(), 0);
+
+    // and the graph revision did not move
+    let (_, json) = call(app, Request::get("/graph").body(Body::empty()).unwrap()).await;
+    assert_eq!(json["revision"], 1);
+}
+
+#[tokio::test]
+async fn likec4_import_of_foreign_model_creates_fqn_subjects() {
+    let dsl = r#"
+        model {
+            system billing {
+                container worker "Worker"
+            }
+            billing -[depends_on]-> billing.worker
+        }
+    "#;
+    let (status, json) = call(
+        app(),
+        Request::post("/views/c4/likec4")
+            .header("content-type", "text/plain")
+            .body(Body::from(dsl))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["defined_subjects"].as_array().unwrap().len(), 2);
+    let ids: Vec<String> = json["defined_subjects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            format!(
+                "{}:{}:{}",
+                s["namespace"].as_str().unwrap_or_default(),
+                s["kind"].as_str().unwrap_or_default(),
+                s["id"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    assert!(ids.contains(&"arch:system:billing".to_owned()));
+    assert!(ids.contains(&"arch:container:billing.worker".to_owned()));
+    assert_eq!(json["declared_relations"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn likec4_import_rejects_broken_dsl() {
+    let (status, json) = call(
+        app(),
+        Request::post("/views/c4/likec4")
+            .header("content-type", "text/plain")
+            .body(Body::from("model { system a a -> ghost }"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(json["error"]
+        .as_str()
+        .expect("error message")
+        .contains("unknown element"));
+}
+
+#[tokio::test]
+async fn c4_diff_endpoint_reports_architecture_changes() {
+    let app = app();
+    let (status, _) = call(
+        app.clone(),
+        Request::post("/events")
+            .header("content-type", "application/json")
+            .body(Body::from(SAMPLE_EVENT))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (_, json) = call(
+        app,
+        Request::get("/views/c4/diff?from=0").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(json["from_revision"], 0);
+    assert_eq!(json["to_revision"], 1);
+    let added = json["added_elements"].as_array().unwrap();
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0]["identity"], "arch:system:vistalith");
+    assert!(json["removed_elements"].as_array().unwrap().is_empty());
+    assert!(json["changed_elements"].as_array().unwrap().is_empty());
+}

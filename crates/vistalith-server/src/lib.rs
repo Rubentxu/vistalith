@@ -187,6 +187,8 @@ pub fn router(state: AppState) -> Router {
         .route("/intents/{id}/promote", post(promote_intent))
         .route("/intents/{id}/discard", post(discard_intent))
         .route("/views/c4", get(get_c4_view))
+        .route("/views/c4/likec4", get(get_likec4_model).post(post_likec4_model))
+        .route("/views/c4/diff", get(get_c4_diff))
         .route("/views/context", post(post_context_view))
         .route("/algorithms/impact/{namespace}/{kind}/{id}", get(get_impact))
         .route("/algorithms/path", get(get_path))
@@ -1975,6 +1977,70 @@ async fn get_c4_view(State(state): State<AppState>) -> Json<serde_json::Value> {
         "components": view.components,
         "relationships": view.relationships,
     }))
+}
+
+// --- LikeC4 round-trip (slice 19, SPK-008) -----------------------------------
+
+use vistalith_graph::{LikeC4Error, c4_diff, import_likec4, likec4_source, parse_likec4};
+
+impl From<LikeC4Error> for ApiError {
+    fn from(err: LikeC4Error) -> Self {
+        ApiError::bad_request(err.to_string())
+    }
+}
+
+/// Exports the current C4 projection as LikeC4 DSL (`text/plain`).
+async fn get_likec4_model(State(state): State<AppState>) -> Response {
+    let store = state.store.read().await;
+    let source = likec4_source(store.graph());
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        source,
+    )
+        .into_response()
+}
+
+/// Imports LikeC4 DSL (`text/plain` body) as durable SWG events. Identity
+/// comes from `metadata { vistalith ... }` when present, so round-trips are
+/// no-ops; foreign models become fresh `arch` subjects keyed by FQN.
+async fn post_likec4_model(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    body: String,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let actor = params
+        .get("actor")
+        .and_then(|raw| vistalith_domain::Actor::new(raw).ok())
+        .unwrap_or_else(|| vistalith_domain::Actor::new("user:likec4").expect("static actor"));
+    let model = parse_likec4(&body)?;
+    let mut store = state.store.write().await;
+    let report = import_likec4(&mut store, &model, &actor)?;
+    Ok(Json(serde_json::to_value(&report).expect("report serializes")))
+}
+
+/// Architecture revision diff between two revisions of the C4 projection.
+async fn get_c4_diff(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<vistalith_graph::C4Diff>, ApiError> {
+    let parse = |key: &str| -> Result<Option<u64>, ApiError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(raw) => raw
+                .parse()
+                .map(Some)
+                .map_err(|e| ApiError::bad_request(format!("invalid `{key}`: {e}"))),
+        }
+    };
+    let from = parse("from")?.unwrap_or(0);
+    let store = state.store.read().await;
+    let to = match parse("to")? {
+        Some(to) => to,
+        None => store.graph().revision(),
+    };
+    let from_graph = store.graph_at_revision(from)?;
+    let to_graph = store.graph_at_revision(to)?;
+    Ok(Json(c4_diff(&from_graph, &to_graph)))
 }
 
 // --- Visual intents (slice 4, SPEC-006) -------------------------------------

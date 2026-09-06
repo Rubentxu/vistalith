@@ -2,6 +2,7 @@ import type {
   AgentInfo,
   AgentRunResult,
   AppendedEvent,
+  C4Diff,
   C4View,
   CanvasSubject,
   CreateCanvasSubjectInput,
@@ -21,6 +22,7 @@ import type {
   ImpactReport,
   IntentDetail,
   IntentSummary,
+  LikeC4ImportReport,
   McpServerConfig,
   McpServerInfo,
   PatchOutcome,
@@ -526,6 +528,51 @@ export class VistalithClient {
 
   async c4View(): Promise<C4View> {
     return this.getJson<C4View>("/views/c4");
+  }
+
+  // --- LikeC4 round-trip (slice 19, SPK-008) ---
+
+  /**
+   * Exports the current C4 projection as LikeC4 DSL source. Every element
+   * carries its SubjectRef in `metadata { vistalith ... }`.
+   */
+  async likec4Model(): Promise<string> {
+    const response = await this.fetchImpl(`${this.baseUrl}/views/c4/likec4`);
+    if (response.status !== 200) {
+      throw new ApiError(response.status, await response.text());
+    }
+    return response.text();
+  }
+
+  /**
+   * Imports LikeC4 DSL as durable SWG events. With `metadata { vistalith }`
+   * identities the import is an identity-preserving no-op for unchanged
+   * elements; foreign models become fresh `arch` subjects keyed by FQN.
+   */
+  async importLikec4(
+    source: string,
+    actor?: string,
+  ): Promise<LikeC4ImportReport> {
+    const query =
+      actor === undefined ? "" : `?actor=${encodeURIComponent(actor)}`;
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/views/c4/likec4${query}`,
+      {
+        method: "POST",
+        headers: { "content-type": "text/plain; charset=utf-8" },
+        body: source,
+      },
+    );
+    return this.parse<LikeC4ImportReport>(response, {
+      okStatus: 200,
+      throwOnError: true,
+    });
+  }
+
+  /** Architecture revision diff of the C4 projection (SPK-008). */
+  async c4Diff(from: number, to?: number): Promise<C4Diff> {
+    const query = to === undefined ? `?from=${from}` : `?from=${from}&to=${to}`;
+    return this.getJson<C4Diff>(`/views/c4/diff${query}`);
   }
 
   // --- Visual intents (slice 4, SPEC-006) ---

@@ -37,6 +37,7 @@ built and changed. The full planning baseline lives in
 | 16 | Full impact analysis — direct/transitive, tests, stale evidence, invalidated decisions, explicit unknown impact (visual/IMPACT.md) | done |
 | 17 | Thinking canvas — free-form primitives as advisory subjects + progressive formalization to VisualIntent (VISUAL-THINKING.md) | done |
 | 18 | Agent runs — agent-defined frames, structured outputs, contributes_to/executed_by traceability (AGENTS-DELEGATION.md) | done |
+| 19 | LikeC4 round-trip — C4 DSL export/import with `SubjectRef` identity in metadata + architecture revision diff (SPK-008) | done |
 
 ## Normative baseline decisions
 
@@ -126,6 +127,13 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    note, inventoried per scenario with the latest verdict. The GUI never
    defines a parallel UAT lifecycle — where the scenario is
    SDDK-governed, SDDK semantics remain authoritative.
+14. The LikeC4 round-trip (SPK-008) is identity-preserving: the C4 DSL
+   export carries every element's `SubjectRef` in
+   `metadata { vistalith "ns:kind:id" }`, and re-importing an untouched
+   export appends nothing (report: unchanged/skipped, graph revision
+   unchanged). Foreign models (no metadata) become fresh `arch` subjects
+   keyed by FQN — never a guess at existing identity. LikeC4 is a
+   renderer/model adapter: the DSL never becomes canonical storage.
 
 ## Repository layout
 
@@ -145,6 +153,7 @@ apps/
 dev/                   # pinned SDDK checkout + pinned sddk CLI binary (gitignored)
 docs/DEPENDENCIES.md   # dependency pins and pin policy
 docs/SURREALDB-SPIKE.md  # SPK-003 gate report and verdict
+docs/LIKEC4-SPIKE.md   # SPK-008 LikeC4 round-trip report
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
 ```
 
@@ -257,7 +266,15 @@ advisory only),
 `POST|GET /canvas/subjects` and
 `POST /canvas/subjects/{ns}/{kind}/{id}/promote` (slice 17: the thinking
 canvas — note/question/hypothesis/option primitives as advisory subjects,
-attached by mention, formalizing into VisualIntent drafts on demand). `POST /intents/{id}/promote` takes `approve`
+attached by mention, formalizing into VisualIntent drafts on demand),
+`GET /views/c4/likec4` (slice 19 / SPK-008: the C4 projection as LikeC4
+DSL, `text/plain` — every element carries its `SubjectRef` in
+`metadata { vistalith ... }`) and `POST /views/c4/likec4` (import that DSL
+back as durable events; identity-preserving no-op for untouched exports,
+fresh FQN-keyed `arch` subjects for foreign models),
+`GET /views/c4/diff?from=A[&to=B]` (architecture revision diff: added/
+removed/changed elements and relationships on stable identities).
+`POST /intents/{id}/promote` takes `approve`
 (SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
 --sddk-project`, promotions on SDDK-owned subjects submit a governed
 proposal through the SDDK capability gateway — low risk executes and
@@ -281,7 +298,9 @@ submitted and reviewed in
 The web chat streams assistant turns live (deltas render as they arrive).
 The web client has three lenses over the same identities: **Graph**
 (subjects/edges, with a time-travel selector and structural diff when
-viewing a past revision), **C4** (projected view) and **Chat** (threads,
+viewing a past revision), **C4** (projected view — with a LikeC4
+round-trip section: export the DSL, edit it, import it back, and an
+architecture diff between revisions) and **Chat** (threads,
 with a per-thread fork action; copied items are marked `⎇ forked`, and the
 tools panel lists the unified catalog where ask-class tools can be granted
 or revoked).

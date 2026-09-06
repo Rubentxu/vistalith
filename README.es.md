@@ -36,6 +36,9 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 14 | Pull-up de innovaciones — evaluación focus-test + envío gobernado a SDDK (M10, INNOVATION-PULL-UP.md) | hecho |
 | 15 | Checks de UAT — registros durables pass/fail/blocked por escenario con inventario en lente (UAT-STUDIO.md) | hecho |
 | 16 | Análisis de impacto completo — directos/transitivos, tests, evidencia obsoleta, decisiones invalidadas, impacto desconocido explícito (visual/IMPACT.md) | hecho |
+| 17 | Canvas de thinking — primitivas de forma libre como sujetos advisory + formalización progresiva a VisualIntent (VISUAL-THINKING.md) | hecho |
+| 18 | Ejecuciones de agentes — frames definidos por agente, salidas estructuradas, trazabilidad contributes_to/executed_by (AGENTS-DELEGATION.md) | hecho |
+| 19 | Round-trip LikeC4 — export/import del DSL C4 con identidad `SubjectRef` en metadatos + diff de revisión de arquitectura (SPK-008) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -132,6 +135,14 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    veredicto. La GUI nunca define un ciclo de vida UAT paralelo — donde el
    escenario esté gobernado por SDDK, la semántica de SDDK sigue siendo
    autoridad.
+14. El round-trip LikeC4 (SPK-008) preserva la identidad: el export C4 a
+   DSL lleva el `SubjectRef` de cada elemento en
+   `metadata { vistalith "ns:kind:id" }`, y re-importar un export intacto
+   no añade nada (informe: unchanged/skipped, revisión del grafo sin
+   cambiar). Los modelos ajenos (sin metadatos) se convierten en sujetos
+   `arch` nuevos claveados por FQN — nunca una suposición sobre identidad
+   existente. LikeC4 es un adaptador de renderizado/modelo: el DSL nunca
+   se convierte en almacenamiento canónico.
 
 ## Estructura del repositorio
 
@@ -151,6 +162,7 @@ apps/
 dev/                   # checkout de SDDK fijado + binario sddk fijado (gitignored)
 docs/DEPENDENCIES.md   # pins de dependencias y política de pinning
 docs/SURREALDB-SPIKE.md  # informe y veredicto de la puerta SPK-003
+docs/LIKEC4-SPIKE.md   # informe del round-trip LikeC4 (SPK-008)
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # baseline de planificación (docs)
 ```
 
@@ -233,7 +245,57 @@ presupuestos — `AGENTS-DELEGATION.md`), `POST|GET /frames`,
 (slice 8: ejecución acotada — el frame posee un hilo, sus
 `permitted_tools` restringen el catálogo unificado, y sus presupuestos de
 turnos/tokens lo cierran automáticamente: `completed`, `aborted`,
-`turns-exhausted`, `budget-exhausted`).
+`turns-exhausted`, `budget-exhausted`),
+`GET /sddk/receipts` (slice 9: receipts del ledger SDDK con el puente
+configurado),
+`GET /mcp/servers/{name}/health`, `POST /mcp/servers/{name}/refresh`
+(re-descubrimiento), `POST /mcp/servers/{name}/disable|enable` (slice 12:
+los servidores disabled conservan su registro mientras sus tools salen del
+catálogo unificado; una llamada que encuentre el transporte muerto
+reconecta una vez y reintenta — el proceso hijo resucita),
+`POST /sddk/sync` (slice 10 / M6: proyecta los ciclos del ledger SDDK al
+SWG como sujetos derivados `sddk:workflow:<id>`, idempotente por ids de
+evento deterministas),
+`GET /why/{namespace}/{kind}/{id}?depth=` (slice 10 / M9: el why-path —
+enlaces de soporte entrantes con la columna de evidencia
+`provides_evidence_for` / `verifies` resaltada),
+`GET /lens/decisions` (slice 13: la lente de decisiones — por decisión,
+pregunta, opción elegida, alternativas rechazadas, requisito motivador,
+evidencia de soporte, contradicciones y revisits, leídos de las relations
+tipadas),
+`POST /sddk/pull-up` (slice 14 / M10: evalúa una innovación de Vistalith
+contra el focus test de SDDK — sin GUI ni LLM, relevancia semántica, sin
+autoridad duplicada, determinista — la clasifica de forma determinista
+(VISTALITH_ONLY → SDDK_PROPOSAL) y, para propuestas, la envía como
+evidencia gobernada por el gateway de capacidades de SDDK),
+`POST /uat/checks` + `GET /lens/uat` (slice 15: checks UAT durables por
+escenario con el último veredicto),
+`POST /agents/{id}/run` (slice 18: ejecutar un objetivo en un agente
+definido — el frame se crea con las instrucciones, tools y presupuestos
+del agente, y la ejecución registra salidas estructuradas con
+trazabilidad contributes_to/executed_by),
+`GET /algorithms/impact/{ns}/{kind}/{id}?full=true` (slice 16: análisis
+de impacto completo — dependientes directos y transitivos, tests
+afectados, evidencia obsoleta, decisiones posiblemente invalidadas e
+impacto desconocido explícito; solo advisory),
+`POST|GET /canvas/subjects` y
+`POST /canvas/subjects/{ns}/{kind}/{id}/promote` (slice 17: el canvas de
+thinking — primitivas note/question/hypothesis/option como sujetos
+advisory, adjuntas por mención, formalizables en drafts de VisualIntent a
+demanda),
+`GET /views/c4/likec4` (slice 19 / SPK-008: la proyección C4 como DSL de
+LikeC4, `text/plain` — cada elemento lleva su `SubjectRef` en
+`metadata { vistalith ... }`) y `POST /views/c4/likec4` (importar ese DSL
+como eventos durables; no-op que preserva identidad para exports
+intactos, sujetos `arch` nuevos claveados por FQN para modelos ajenos),
+`GET /views/c4/diff?from=A[&to=B]` (diff de revisión de arquitectura:
+elementos y relaciones añadidos/eliminados/cambiados sobre identidades
+estables). `POST /intents/{id}/promote` toma `approve`
+(SPK-012: con el puente activado vía `--sddk-ledger/--sddk-workflow/
+--sddk-project`, las promociones sobre sujetos SDDK envían una propuesta
+gobernada por el gateway de capacidades de SDDK — riesgo bajo ejecuta y
+receipts; riesgo alto exige `approve: true`; capacidades no declaradas se
+deniegan por defecto).
 
 Los appends de eventos en vivo (`POST /events`) disparan los comportamientos
 reactivos incorporados (SPEC-003): `impact-advisory` (un cambio en X avisa a
@@ -253,7 +315,9 @@ enviado y revisado en
 El chat web muestra los turnos del asistente en vivo (los deltas se renderizan a medida que llegan).
 El cliente web tiene tres lentes sobre las mismas identidades: **Graph**
 (sujetos/aristas, con selector de time travel y diff estructural al ver una
-revisión pasada), **C4** (vista proyectada) y **Chat** (hilos, con acción de
+revisión pasada), **C4** (vista proyectada — con una sección de round-trip
+LikeC4: exportar el DSL, editarlo, importarlo de vuelta, y un diff de
+arquitectura entre revisiones) y **Chat** (hilos, con acción de
 fork por hilo; los items copiados se marcan `⎇ forked`, y el panel de tools
 muestra el catálogo unificado donde las tools ask se conceden o revocan).
 Seleccionar un sujeto en cualquier lente propaga el mismo `SubjectRef`.
