@@ -39,6 +39,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 17 | Canvas de thinking — primitivas de forma libre como sujetos advisory + formalización progresiva a VisualIntent (VISUAL-THINKING.md) | hecho |
 | 18 | Ejecuciones de agentes — frames definidos por agente, salidas estructuradas, trazabilidad contributes_to/executed_by (AGENTS-DELEGATION.md) | hecho |
 | 19 | Round-trip LikeC4 — export/import del DSL C4 con identidad `SubjectRef` en metadatos + diff de revisión de arquitectura (SPK-008) | hecho |
+| 20 | Bindings semánticos Excalidraw — bindings durables forma→sujeto claveados por contenido, nunca por ids de forma del renderer (SPK-009, ADR-014) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -143,6 +144,15 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    `arch` nuevos claveados por FQN — nunca una suposición sobre identidad
    existente. LikeC4 es un adaptador de renderizado/modelo: el DSL nunca
    se convierte en almacenamiento canónico.
+15. Los bindings del canvas (SPK-009, ADR-014) son sujetos advisory
+   durables (`vistalith:sketch-element` + `visualizes`) claveados por
+   escena y huella de contenido — **nunca por ids de forma del renderer**.
+   Los ficheros de escena llevan la identidad en
+   `customData { vistalith }`; re-importar una escena con ids
+   renumerados (o con `customData` eliminado, contenido intacto) es un
+   no-op. El contenido ambiguo (dos sujetos, mismo texto) queda sin
+   vincular — el import nunca adivina — y crear primitivas desde formas
+   sin vincular es un opt-in explícito, nada se ejecuta en silencio.
 
 ## Estructura del repositorio
 
@@ -163,6 +173,7 @@ dev/                   # checkout de SDDK fijado + binario sddk fijado (gitignor
 docs/DEPENDENCIES.md   # pins de dependencias y política de pinning
 docs/SURREALDB-SPIKE.md  # informe y veredicto de la puerta SPK-003
 docs/LIKEC4-SPIKE.md   # informe del round-trip LikeC4 (SPK-008)
+docs/EXCALIDRAW-BINDINGS.md  # informe de bindings de canvas (SPK-009)
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # baseline de planificación (docs)
 ```
 
@@ -290,7 +301,16 @@ como eventos durables; no-op que preserva identidad para exports
 intactos, sujetos `arch` nuevos claveados por FQN para modelos ajenos),
 `GET /views/c4/diff?from=A[&to=B]` (diff de revisión de arquitectura:
 elementos y relaciones añadidos/eliminados/cambiados sobre identidades
-estables). `POST /intents/{id}/promote` toma `approve`
+estables),
+`GET /canvas/excalidraw` (slice 20 / SPK-009: las primitivas del canvas
+como escena Excalidraw, identidad en `customData { vistalith }`) y
+`POST /canvas/excalidraw?scene=&create_missing=&actor=` (importar una
+escena como eventos `canvas-bound` durables — bindings claveados por
+contenido que sobreviven a la renumeración de ids de forma; la ambigüedad
+queda sin vincular, `create_missing` es un opt-in explícito que convierte
+formas de texto sin vincular en primitivas note advisory),
+`GET /canvas/bindings?scene=` (los bindings forma → sujeto almacenados).
+`POST /intents/{id}/promote` toma `approve`
 (SPK-012: con el puente activado vía `--sddk-ledger/--sddk-workflow/
 --sddk-project`, las promociones sobre sujetos SDDK envían una propuesta
 gobernada por el gateway de capacidades de SDDK — riesgo bajo ejecuta y
@@ -308,7 +328,10 @@ sigue siendo byte-determinista (hito M4).
 El cliente web también tiene una lente **Decisions** que renderiza esa
 cadena por decisión (M9: pregunta → elegida → rechazadas → evidencia) y una
 lente **Thinking**: dibuja primitivas, adjúntalas a sujetos semánticos y
-formalízalas en drafts de VisualIntent (formalización progresiva).
+formalízalas en drafts de VisualIntent (formalización progresiva) — con
+una sección de round-trip Excalidraw: exporta las primitivas como escena
+Excalidraw, pégala edítala, e impórtala de vuelta como bindings durables
+(SPK-009).
 El primer candidato de pull-up — el digest de replay determinista — está
 enviado y revisado en
 [`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).

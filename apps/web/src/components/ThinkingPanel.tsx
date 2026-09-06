@@ -1,6 +1,7 @@
 import type { CanvasSubject, VistalithClient } from "@vistalith/client";
 import { useCallback, useEffect, useState } from "react";
 import { client as defaultClient } from "../api.ts";
+import { ExcalidrawPanel } from "./ExcalidrawPanel.tsx";
 
 /**
  * Thinking lens (slice 17, VISUAL-THINKING.md): free-form primitives —
@@ -76,6 +77,7 @@ export function ThinkingPanel({
   return (
     <div className="thinking-panel" data-testid="thinking-panel">
       <div className="thinking-create">
+        {" "}
         <h3>thinking canvas</h3>
         <select
           aria-label="primitive kind"
@@ -140,6 +142,7 @@ export function ThinkingPanel({
           <li className="empty">no primitives yet — sketch one</li>
         ) : null}
       </ul>
+      <ExcalidrawPanel client={client} onGraphChanged={reload} />
     </div>
   );
 }

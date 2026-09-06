@@ -1207,3 +1207,43 @@ code {
 .likec4-diff .diff-changed {
   color: #ffd866;
 }
+
+/* --- Excalidraw bindings (slice 20, SPK-009) --- */
+
+.excalidraw-panel {
+  margin-top: 0.8rem;
+  border-top: 1px solid var(--border, #2a2d34);
+  padding-top: 0.5rem;
+}
+
+.excalidraw-panel h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+}
+
+.excalidraw-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.excalidraw-source {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  background: var(--surface-2, #16181d);
+  color: var(--text, #e6e6e6);
+  border: 1px solid var(--border, #2a2d34);
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.excalidraw-report {
+  font-size: 0.75rem;
+  margin: 0.3rem 0;
+}
+
+.excalidraw-error {
+  color: #ff6b6b;
+  font-size: 0.75rem;
+}

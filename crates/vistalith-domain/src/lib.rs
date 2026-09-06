@@ -19,7 +19,8 @@ mod subject;
 pub use authority::AuthorityClass;
 pub use error::DomainError;
 pub use event::{
-    AdvisoryRaised, AgentDefined, DeterminismClass, EventPayload, FrameClosed, FrameOutcome,
+    AdvisoryRaised, AgentDefined, CanvasBound, CanvasGeometry, DeterminismClass, EventPayload,
+    FrameClosed, FrameOutcome,
     AgentRunFinished, FrameStarted, FrameTurnCompleted, UatCheckRecorded, UatVerdict, IntentDrafted, IntentOutcome, IntentPromoted,
     MessageAppended, PatchApplied, PatchRejected, RelationDeclared, StoredEvent, SubjectDefined,
     SddkProposalSubmitted, SubjectDeprecated, SubjectUpdated, ThreadForked, ThreadStarted, ToolInvoked, TurnCompleted,

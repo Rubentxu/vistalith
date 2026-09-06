@@ -203,6 +203,8 @@ pub fn router(state: AppState) -> Router {
         .route("/canvas/subjects", post(post_canvas_subject))
         .route("/canvas/subjects", get(get_canvas_subjects))
         .route("/canvas/subjects/{ns}/{kind}/{id}/promote", post(post_canvas_promote))
+        .route("/canvas/excalidraw", get(get_canvas_scene).post(post_canvas_scene))
+        .route("/canvas/bindings", get(get_canvas_bindings))
         .layer(cors)
         .with_state(state)
 }
@@ -1601,6 +1603,71 @@ async fn get_canvas_subjects(State(state): State<AppState>) -> Json<serde_json::
         .collect();
     subjects.sort_by(|a, b| a["subject"].to_string().cmp(&b["subject"].to_string()));
     Json(serde_json::json!({ "subjects": subjects }))
+}
+
+// --- Excalidraw bindings (slice 20, SPK-009, ADR-014) ------------------------
+
+use vistalith_graph::{
+    ExcalidrawError, ExcalidrawImportOptions, canvas_bindings, export_excalidraw,
+    import_excalidraw,
+};
+
+impl From<ExcalidrawError> for ApiError {
+    fn from(err: ExcalidrawError) -> Self {
+        ApiError::bad_request(err.to_string())
+    }
+}
+
+/// GET /canvas/excalidraw?scene=S — the canvas primitives as an Excalidraw
+/// scene; every element carries `customData.vistalith` with its SubjectRef.
+async fn get_canvas_scene(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let scene = params
+        .get("scene")
+        .cloned()
+        .unwrap_or_else(|| vistalith_graph::DEFAULT_SCENE.to_owned());
+    let store = state.store.read().await;
+    Json(export_excalidraw(store.graph(), &scene))
+}
+
+/// POST /canvas/excalidraw?scene=S&create_missing=false — import a scene as
+/// durable `canvas-bound` events. Identity comes from `customData.vistalith`
+/// (round-trip); unchanged content re-imports as a no-op even when shape ids
+/// changed or customData was stripped.
+async fn post_canvas_scene(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    Json(scene): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let actor = params
+        .get("actor")
+        .and_then(|raw| vistalith_domain::Actor::new(raw).ok())
+        .unwrap_or_else(|| vistalith_domain::Actor::new("user:canvas").expect("static actor"));
+    let options = ExcalidrawImportOptions {
+        scene: params
+            .get("scene")
+            .cloned()
+            .unwrap_or_else(|| vistalith_graph::DEFAULT_SCENE.to_owned()),
+        create_missing: params
+            .get("create_missing")
+            .map(|raw| raw == "true" || raw == "1")
+            .unwrap_or(false),
+    };
+    let mut store = state.store.write().await;
+    let report = import_excalidraw(&mut store, &scene, &options, &actor)?;
+    Ok(Json(serde_json::to_value(&report).expect("report serializes")))
+}
+
+/// GET /canvas/bindings?scene=S — the stored shape → subject bindings.
+async fn get_canvas_bindings(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let store = state.store.read().await;
+    let bindings = canvas_bindings(store.graph(), params.get("scene").map(String::as_str));
+    Json(serde_json::json!({ "bindings": bindings }))
 }
 
 /// POST /canvas/subjects/{ns}/{kind}/{id}/promote — progressive

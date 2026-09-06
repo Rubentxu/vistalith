@@ -87,6 +87,10 @@ pub enum EventPayload {
     IntentDrafted(IntentDrafted),
     /// An intent draft was promoted, routed to SDDK governance or discarded.
     IntentPromoted(IntentPromoted),
+    /// A canvas shape was bound to a semantic subject (SPK-009, ADR-014):
+    /// an advisory `vistalith:sketch-element` binding that visualizes the
+    /// subject, stored independently from renderer shape ids.
+    CanvasBound(CanvasBound),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -189,6 +193,40 @@ pub struct AgentRunFinished {
     pub assumptions: Vec<String>,
     /// Verdict marker for quick lens filtering.
     pub status: String,
+}
+
+/// Position/size of a canvas shape (SPK-009). Geometry is bookkeeping for
+/// faithful re-rendering, never part of a binding's identity.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CanvasGeometry {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// A canvas shape was bound to a semantic subject (SPK-009, ADR-014):
+/// the binding is a Vistalith-owned advisory fact, stored OUTSIDE the
+/// renderer. Excalidraw shape ids are recorded as provenance only — never
+/// as canonical identity (`VISUAL-THINKING.md`: "Never store Excalidraw
+/// IDs as canonical semantic identity"). The stable key is the content
+/// `fingerprint`; `via` records how the binding was established
+/// (`custom-data`, `fingerprint`, `manual`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CanvasBound {
+    /// The binding subject this event creates (`vistalith:sketch-element`).
+    pub binding: SubjectRef,
+    /// The semantic subject the shape visualizes; must already exist.
+    pub subject: SubjectRef,
+    /// Canvas scene name (a subject may be visualized in several scenes).
+    pub scene: String,
+    /// Renderer shape id AT BINDING TIME — provenance, not identity.
+    pub shape_id: String,
+    /// Stable content fingerprint (shape type + normalized text).
+    pub fingerprint: String,
+    pub via: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<CanvasGeometry>,
 }
 
 /// A recorded UAT check (UAT-STUDIO.md). The check is a Vistalith-owned
@@ -438,6 +476,7 @@ impl VEvent {
             EventPayload::FrameClosed(_) => "frame-closed",
             EventPayload::IntentDrafted(_) => "intent-drafted",
             EventPayload::IntentPromoted(_) => "intent-promoted",
+            EventPayload::CanvasBound(_) => "canvas-bound",
         }
     }
 }

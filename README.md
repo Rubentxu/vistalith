@@ -38,6 +38,7 @@ built and changed. The full planning baseline lives in
 | 17 | Thinking canvas — free-form primitives as advisory subjects + progressive formalization to VisualIntent (VISUAL-THINKING.md) | done |
 | 18 | Agent runs — agent-defined frames, structured outputs, contributes_to/executed_by traceability (AGENTS-DELEGATION.md) | done |
 | 19 | LikeC4 round-trip — C4 DSL export/import with `SubjectRef` identity in metadata + architecture revision diff (SPK-008) | done |
+| 20 | Excalidraw semantic bindings — durable shape→subject bindings keyed by content, never by renderer shape ids (SPK-009, ADR-014) | done |
 
 ## Normative baseline decisions
 
@@ -134,6 +135,14 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    unchanged). Foreign models (no metadata) become fresh `arch` subjects
    keyed by FQN — never a guess at existing identity. LikeC4 is a
    renderer/model adapter: the DSL never becomes canonical storage.
+15. Canvas bindings (SPK-009, ADR-014) are durable advisory subjects
+   (`vistalith:sketch-element` + `visualizes`) keyed by scene and content
+   fingerprint — **never by renderer shape ids**. Scene files carry
+   identity in `customData { vistalith }`; re-importing a scene whose ids
+   were renumbered (or whose `customData` was stripped, content intact)
+   is a no-op. Ambiguous content (two subjects, same text) stays unbound
+   — import never guesses — and creating primitives from unbound shapes
+   is an explicit opt-in, nothing executes silently.
 
 ## Repository layout
 
@@ -154,6 +163,7 @@ dev/                   # pinned SDDK checkout + pinned sddk CLI binary (gitignor
 docs/DEPENDENCIES.md   # dependency pins and pin policy
 docs/SURREALDB-SPIKE.md  # SPK-003 gate report and verdict
 docs/LIKEC4-SPIKE.md   # SPK-008 LikeC4 round-trip report
+docs/EXCALIDRAW-BINDINGS.md  # SPK-009 canvas binding report
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
 ```
 
@@ -273,7 +283,14 @@ DSL, `text/plain` — every element carries its `SubjectRef` in
 back as durable events; identity-preserving no-op for untouched exports,
 fresh FQN-keyed `arch` subjects for foreign models),
 `GET /views/c4/diff?from=A[&to=B]` (architecture revision diff: added/
-removed/changed elements and relationships on stable identities).
+removed/changed elements and relationships on stable identities),
+`GET /canvas/excalidraw` (slice 20 / SPK-009: the canvas primitives as an
+Excalidraw scene, identity in `customData { vistalith }`) and
+`POST /canvas/excalidraw?scene=&create_missing=&actor=` (import a scene as
+durable `canvas-bound` events — content-keyed bindings that survive shape
+id renumbering; ambiguity stays unbound, `create_missing` is an explicit
+opt-in that turns unbound text shapes into advisory note primitives),
+`GET /canvas/bindings?scene=` (the stored shape → subject bindings).
 `POST /intents/{id}/promote` takes `approve`
 (SPK-012: with the bridge enabled via `--sddk-ledger/--sddk-workflow/
 --sddk-project`, promotions on SDDK-owned subjects submit a governed
@@ -291,7 +308,10 @@ behaviors, so replay stays byte-deterministic (milestone M4).
 The web client also has a **Decisions** lens rendering that chain per
 decision (M9: question → selected → rejected → evidence) and a
 **Thinking** lens: sketch primitives, attach them to semantic subjects and
-formalize them into VisualIntent drafts (progressive formalization).
+formalize them into VisualIntent drafts (progressive formalization) —
+with an Excalidraw round-trip section: export the primitives as an
+Excalidraw scene, paste/edit it, import it back as durable bindings
+(SPK-009).
 The first pull-up candidate — the deterministic replay digest — is
 submitted and reviewed in
 [`docs/PULL-UP-REPLAY-DIGEST.md`](docs/PULL-UP-REPLAY-DIGEST.md).

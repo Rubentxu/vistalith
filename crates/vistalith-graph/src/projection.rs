@@ -688,6 +688,38 @@ pub fn apply_event(
                 )));
             }
         }
+        EventPayload::CanvasBound(bound) => {
+            if graph.node(&bound.subject).is_none() {
+                return Err(ProjectionError::UnknownSubject(bound.subject.to_string()));
+            }
+            if graph.node(&bound.binding).is_some() {
+                return Err(ProjectionError::DuplicateSubject(bound.binding.to_string()));
+            }
+            let mut properties = thread_properties(&[
+                ("scene", serde_json::json!(bound.scene)),
+                ("shape_id", serde_json::json!(bound.shape_id)),
+                ("fingerprint", serde_json::json!(bound.fingerprint)),
+                ("via", serde_json::json!(bound.via)),
+                ("subject", serde_json::json!(bound.subject.to_string())),
+            ]);
+            if let Some(geometry) = &bound.geometry {
+                properties.insert("geometry".to_owned(), serde_json::json!(geometry));
+            }
+            graph.upsert_subject(
+                bound.binding.clone(),
+                AuthorityClass::Advisory,
+                event_provenance(event),
+                properties,
+                sequence,
+            );
+            let fact = RelationFact {
+                relation: RelationRef::new(bound.binding.clone(), RelationKind::Visualizes, bound.subject.clone())
+                    .map_err(|e| ProjectionError::InvalidOperation(e.to_string()))?,
+                authority: AuthorityClass::Advisory,
+                provenance: event_provenance(event),
+            };
+            graph.declare_relation(fact, sequence);
+        }
         EventPayload::IntentPromoted(promoted) => {
             if graph.node(&promoted.intent).is_none() {
                 return Err(ProjectionError::UnknownSubject(promoted.intent.to_string()));

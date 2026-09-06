@@ -4,11 +4,13 @@ import type {
   AppendedEvent,
   C4Diff,
   C4View,
+  CanvasBinding,
   CanvasSubject,
   CreateCanvasSubjectInput,
   CreateFrameInput,
   DecisionsLens,
   DraftIntentInput,
+  ExcalidrawImportReport,
   ForkReply,
   ForkThreadInput,
   FrameSummary,
@@ -528,6 +530,52 @@ export class VistalithClient {
 
   async c4View(): Promise<C4View> {
     return this.getJson<C4View>("/views/c4");
+  }
+
+  // --- Excalidraw semantic bindings (slice 20, SPK-009) ---
+
+  /** Exports the canvas primitives as an Excalidraw scene (identity in
+   *  `customData.vistalith`). */
+  async canvasScene(scene?: string): Promise<unknown> {
+    const query =
+      scene === undefined ? "" : `?scene=${encodeURIComponent(scene)}`;
+    return this.getJson<unknown>(`/canvas/excalidraw${query}`);
+  }
+
+  /**
+   * Imports an Excalidraw scene as durable binding events. Identity comes
+   * from `customData.vistalith`; unchanged content re-imports as a no-op
+   * even when shape ids changed or customData was stripped. With
+   * `createMissing`, unbound text shapes become canvas note primitives.
+   */
+  async importCanvasScene(
+    scene: unknown,
+    options: {
+      scene?: string;
+      createMissing?: boolean;
+      actor?: string;
+    } = {},
+  ): Promise<ExcalidrawImportReport> {
+    const params = new URLSearchParams();
+    if (options.scene !== undefined) params.set("scene", options.scene);
+    if (options.createMissing) params.set("create_missing", "true");
+    if (options.actor !== undefined) params.set("actor", options.actor);
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return this.postJson<ExcalidrawImportReport>(
+      `/canvas/excalidraw${query}`,
+      scene,
+      { okStatus: 200, throwOnError: true },
+    );
+  }
+
+  /** Stored shape → subject bindings, optionally filtered by scene. */
+  async canvasBindings(scene?: string): Promise<CanvasBinding[]> {
+    const query =
+      scene === undefined ? "" : `?scene=${encodeURIComponent(scene)}`;
+    const body = await this.getJson<{ bindings: CanvasBinding[] }>(
+      `/canvas/bindings${query}`,
+    );
+    return body.bindings;
   }
 
   // --- LikeC4 round-trip (slice 19, SPK-008) ---

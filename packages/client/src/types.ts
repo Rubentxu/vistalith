@@ -374,6 +374,39 @@ export interface C4Diff {
   changed_relationships: C4RelationshipChange[];
 }
 
+// --- Excalidraw semantic bindings (SPK-009) -----------------------------------
+
+/** Position/size bookkeeping for a bound canvas shape. */
+export interface CanvasGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** A stored shape → subject binding (renderer-independent). */
+export interface CanvasBinding {
+  binding: SubjectRef;
+  subject: SubjectRef;
+  scene: string;
+  /** Excalidraw shape id at binding time — provenance, never identity. */
+  shape_id: string;
+  /** Stable content fingerprint (shape type + normalized text). */
+  fingerprint: string;
+  /** custom-data | fingerprint | import | manual. */
+  via: string;
+  geometry?: CanvasGeometry;
+}
+
+/** Report of an Excalidraw scene import. */
+export interface ExcalidrawImportReport {
+  bound: SubjectRef[];
+  created_primitives: SubjectRef[];
+  skipped_bindings: SubjectRef[];
+  unknown_subjects: string[];
+  unbound_elements: string[];
+}
+
 /** Report of a LikeC4 DSL import (durable events it produced, if any). */
 export interface LikeC4ImportReport {
   defined_subjects: SubjectRef[];

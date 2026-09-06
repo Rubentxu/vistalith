@@ -13,6 +13,7 @@ mod c4;
 mod context;
 mod decisions;
 mod diff;
+mod excalidraw;
 mod likec4;
 mod why;
 mod digest;
@@ -44,6 +45,11 @@ pub use diff::{
 pub use likec4::{
     C4Diff, C4ElementChange, C4RelationshipChange, LikeC4Element, LikeC4Error, LikeC4ImportReport,
     LikeC4Model, LikeC4Relationship, c4_diff, import_likec4, likec4_source, parse_likec4,
+};
+pub use excalidraw::{
+    CanvasBinding, ExcalidrawError, ExcalidrawImportOptions, ExcalidrawImportReport, DEFAULT_SCENE,
+    VIA_CUSTOM_DATA, VIA_FINGERPRINT, VIA_IMPORT, canvas_bindings, export_excalidraw, fingerprint,
+    import_excalidraw,
 };
 pub use digest::{canonical_graph_json, graph_digest};
 pub use graph::{SemanticWorldGraph, SubjectNode};

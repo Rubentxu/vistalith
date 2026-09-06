@@ -344,3 +344,131 @@ async fn c4_diff_endpoint_reports_architecture_changes() {
     assert!(json["removed_elements"].as_array().unwrap().is_empty());
     assert!(json["changed_elements"].as_array().unwrap().is_empty());
 }
+
+// --- Excalidraw bindings (slice 20, SPK-009) ----------------------------------
+
+
+#[tokio::test]
+async fn excalidraw_import_binds_and_round_trips_as_noop() {
+    let app = app();
+
+    // a canvas note primitive exists (slice-17 flow)
+    let (status, note) = call(
+        app.clone(),
+        Request::post("/canvas/subjects")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "kind": "note", "content": "Remember the milk" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let identity = note["subject"].as_str().expect("subject ref");
+
+    // import a scene binding a shape to the note via customData
+    let scene = serde_json::json!({
+        "type": "excalidraw",
+        "elements": [{
+            "id": "shape-1",
+            "type": "text",
+            "text": "Remember the milk",
+            "x": 10.0, "y": 20.0, "width": 120.0, "height": 40.0,
+            "customData": { "vistalith": identity },
+        }],
+    });
+    let (status, report) = call(
+        app.clone(),
+        Request::post("/canvas/excalidraw")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&scene).unwrap()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(report["bound"].as_array().unwrap().len(), 1);
+
+    // bindings read model
+    let (_, bindings) = call(
+        app.clone(),
+        Request::get("/canvas/bindings").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(bindings["bindings"].as_array().unwrap().len(), 1);
+    assert_eq!(bindings["bindings"][0]["via"], "custom-data");
+    assert_eq!(bindings["bindings"][0]["shape_id"], "shape-1");
+
+    // export: the scene carries the identity in customData
+    let (_, exported) = call(
+        app.clone(),
+        Request::get("/canvas/excalidraw").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let elements = exported["elements"].as_array().unwrap();
+    assert_eq!(elements.len(), 1);
+    assert_eq!(elements[0]["customData"]["vistalith"], identity);
+
+    // re-import the export: shape id differs (element id = subject id),
+    // content identical → no-op, revision unchanged
+    let (_, health) = call(app.clone(), Request::get("/health").body(Body::empty()).unwrap()).await;
+    let before = health["graph_revision"].as_u64().unwrap();
+    let (status, report) = call(
+        app.clone(),
+        Request::post("/canvas/excalidraw")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&exported).unwrap()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(report["bound"].as_array().unwrap().len(), 0);
+    assert_eq!(report["skipped_bindings"].as_array().unwrap().len(), 1);
+    let (_, health) = call(app, Request::get("/health").body(Body::empty()).unwrap()).await;
+    assert_eq!(health["graph_revision"].as_u64().unwrap(), before);
+}
+
+#[tokio::test]
+async fn excalidraw_create_missing_makes_primitives() {
+    let app = app();
+    let scene = serde_json::json!({
+        "type": "excalidraw",
+        "elements": [{
+            "id": "shape-9",
+            "type": "text",
+            "text": "A fresh idea from the whiteboard",
+        }],
+    });
+    let (status, report) = call(
+        app.clone(),
+        Request::post("/canvas/excalidraw?create_missing=true")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&scene).unwrap()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(report["created_primitives"].as_array().unwrap().len(), 1);
+
+    // the primitive shows up in the canvas subjects lens
+    let (_, canvas) = call(
+        app,
+        Request::get("/canvas/subjects").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let subjects = canvas["subjects"].as_array().unwrap();
+    assert!(subjects
+        .iter()
+        .any(|s| s["content"] == "A fresh idea from the whiteboard"));
+}
+
+#[tokio::test]
+async fn excalidraw_broken_scene_is_rejected() {
+    let (status, json) = call(
+        app(),
+        Request::post("/canvas/excalidraw")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{ "type": "excalidraw" }"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(json["error"].as_str().expect("error").contains("elements"));
+}
