@@ -31,8 +31,8 @@ pub use intents::{
     promote_intent_with_bridge,
 };
 pub use mcp::{
-    ConnectionStatus, McpConnection, McpError, McpManager, McpServerConfig, McpServerStatus,
-    catalog_id, consequence_from_annotations,
+    ConnectionStatus, McpAuth, McpConnection, McpError, McpManager, McpServerConfig,
+    McpServerStatus, catalog_id, consequence_from_annotations,
 };
 pub use provider::{
     ChatMessage, FakeProvider, FakeStep, ModelError, ModelEvent, ModelEventRx, ModelProvider,

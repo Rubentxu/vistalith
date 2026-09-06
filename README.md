@@ -40,6 +40,7 @@ built and changed. The full planning baseline lives in
 | 19 | LikeC4 round-trip — C4 DSL export/import with `SubjectRef` identity in metadata + architecture revision diff (SPK-008) | done |
 | 20 | Excalidraw semantic bindings — durable shape→subject bindings keyed by content, never by renderer shape ids (SPK-009, ADR-014) | done |
 | 21 | Workflow/agent lens — React Flow + ELK with off-main-thread layout at 1k/10k nodes and no-re-layout live status (SPK-010, ADR-015) | done |
+| 22 | MCP remote auth — bearer/header credentials (inline or env-referenced) on Streamable HTTP, redacted status, reconnect re-authenticates (SPK-007 **closed**) | done |
 
 ## Normative baseline decisions
 
@@ -95,7 +96,10 @@ on SDDK — if the capability belongs to SDDK, call SDDK directly.
    tools need a scoped temporary grant (per-call, consumable, revocable),
    explicit denies always win. Every call — granted or refused — is a
    durable `ToolInvoked` event carrying the tool's source. Vistalith
-   permissions restrict; they never weaken SDDK policy.
+   permissions restrict; they never weaken SDDK policy. MCP credentials
+   (bearer/header, inline or env-referenced) authenticate every transport
+   request, and secrets never leave the server process: status and health
+   carry only a redacted auth kind.
 8. Reactive behaviors (SPEC-003) emit advisory events only — never hidden
    side effects, never authoritative SDDK state (structurally enforced:
    the only payload a behavior may emit is `advisory-raised`). Advisories
@@ -166,6 +170,7 @@ docs/SURREALDB-SPIKE.md  # SPK-003 gate report and verdict
 docs/LIKEC4-SPIKE.md   # SPK-008 LikeC4 round-trip report
 docs/EXCALIDRAW-BINDINGS.md  # SPK-009 canvas binding report
 docs/REACTFLOW-ELK-SPIKE.md  # SPK-010 workflow lens report (measurements included)
+docs/MCP-AUTH.md       # SPK-007 remote auth design and evidence
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # planning baseline (docs)
 ```
 
@@ -335,8 +340,14 @@ Selecting a subject in any lens propagates the same `SubjectRef`.
 MCP: connect a tool server at runtime —
 `POST /mcp/servers {"name":"echo","command":"./target/debug/mcp-echo"}`
 (stdio) or `{"name":"docs","url":"http://localhost:8100/mcp"}` (Streamable
-HTTP). The `mcp-echo` fixture binary ships in the workspace for demos and
-tests. `--provider fake --fake-tool TOOL_ID --fake-args '{...}'` scripts a
+HTTP). Remote servers authenticate with
+`"auth":{"type":"bearer","token_env":"MY_TOKEN"}` (or a static
+`{"type":"header","name":"x-api-key","value":"…"}`) — every transport
+request carries the credential, reconnect re-authenticates, and status /
+health show only the redacted kind (`bearer`, `header:x-api-key`), never
+the secret (SPK-007 closed; see
+[`docs/MCP-AUTH.md`](docs/MCP-AUTH.md)). The `mcp-echo` fixture binary
+ships in the workspace for demos and tests. `--provider fake --fake-tool TOOL_ID --fake-args '{...}'` scripts a
 deterministic tool round for offline demos.
 
 ## Storage decision (SPK-003)

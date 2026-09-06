@@ -12,6 +12,8 @@ vistalith-graph = { workspace = true }
 vistalith-sddk-bridge = { workspace = true }
 rig-core = { workspace = true }
 rmcp = { workspace = true }
+# header-carrying HTTP client for authenticated Streamable HTTP MCP servers
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -23,3 +25,8 @@ futures = { workspace = true }
 [[bin]]
 name = "mcp-echo"
 path = "src/bin/mcp-echo.rs"
+
+[dev-dependencies]
+axum = { workspace = true }
+tower-service = "0.3"
+tokio = { workspace = true }

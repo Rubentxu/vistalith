@@ -65,6 +65,7 @@ async fn app_with_echo(provider: vistalith_agent_runtime::RuntimeProvider) -> Op
             command: Some(echo.display().to_string()),
             args: Vec::new(),
             url: None,
+            auth: None,
         })
         .await
         .expect("fixture server connects");
@@ -266,4 +267,64 @@ async fn an_mcp_tool_call_runs_inside_a_turn() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(reply["content"], "tool round done");
+}
+
+// --- MCP remote auth (slice 22, SPK-007) ---------------------------------------
+
+fn plain_app() -> Router {
+    router(AppState::empty())
+}
+
+#[tokio::test]
+async fn mcp_auth_on_stdio_transport_is_rejected_at_the_boundary() {
+    let (status, json) = call(
+        plain_app(),
+        Request::post("/mcp/servers")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "name": "bad-stdio-auth",
+                    "command": "./target/debug/mcp-echo",
+                    "auth": { "type": "bearer", "token": "leak-me" }
+                }"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(json["error"]
+        .as_str()
+        .expect("error message")
+        .contains("stdio"));
+}
+
+#[tokio::test]
+async fn mcp_server_list_never_reports_secrets() {
+    // registers a stdio server (no auth possible) and checks the status
+    // payload shape stays redacted-by-construction
+    let Some(echo) = mcp_echo_path() else {
+        eprintln!("skipping: mcp-echo binary not built yet");
+        return;
+    };
+    let command = echo.to_string_lossy().replace('\\', "/");
+    let (status, _) = call(
+        plain_app(),
+        Request::post("/mcp/servers")
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                r#"{{ "name": "echo-clean", "command": "{command}" }}"#
+            )))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, servers) = call(
+        plain_app(),
+        Request::get("/mcp/servers").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let body = serde_json::to_string(&servers).expect("serialize");
+    // no credential-shaped field may ever appear in the listing
+    assert!(!body.contains("token"));
+    assert!(!body.contains("secret"));
 }

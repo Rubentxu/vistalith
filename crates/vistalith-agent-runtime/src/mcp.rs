@@ -12,7 +12,10 @@
 //! re-spawns its child process (or re-opens the HTTP session) when a call
 //! finds the transport closed, re-runs discovery on demand, and can be
 //! disabled so its tools leave the unified catalog without being
-//! unregistered. Authenticated remote servers remain open for SPK-007.
+//! unregistered. Remote servers authenticate with a bearer token or a
+//! static header (`McpAuth`), resolved at connect/reconnect time; secrets
+//! surface as a redacted *kind* in status/health and never in errors or
+//! logs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -20,6 +23,7 @@ use std::sync::{Arc, Mutex};
 use rmcp::model::{CallToolRequestParams, ClientInfo, ContentBlock, ToolAnnotations};
 use rmcp::service::{RoleClient, RunningService, serve_client};
 use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -36,6 +40,69 @@ pub enum McpError {
     InvalidConfig(String),
 }
 
+/// Static auth for a Streamable HTTP MCP server (SPK-007). The secret can
+/// be inline (`token`/`value`) or environment-referenced
+/// (`token_env`/`value_env`, resolved at connect/reconnect time). Status
+/// and health expose only the redacted [`McpAuth::kind`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum McpAuth {
+    /// `Authorization: Bearer <token>`.
+    Bearer {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token_env: Option<String>,
+    },
+    /// Arbitrary static header (e.g. `x-api-key`).
+    Header {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value_env: Option<String>,
+    },
+}
+
+impl McpAuth {
+    /// Resolves to the header (name, value). Error messages name the env
+    /// variable, never the secret.
+    pub fn resolve(&self) -> Result<(String, String), String> {
+        match self {
+            McpAuth::Bearer { token, token_env } => {
+                let value = match (token, token_env) {
+                    (Some(token), _) if !token.is_empty() => token.clone(),
+                    (_, Some(env)) => std::env::var(env)
+                        .map_err(|_| format!("auth env var `{env}` is not set"))?,
+                    _ => return Err("bearer auth needs `token` or `token_env`".to_owned()),
+                };
+                Ok(("Authorization".to_owned(), format!("Bearer {value}")))
+            }
+            McpAuth::Header {
+                name,
+                value,
+                value_env,
+            } => {
+                let resolved = match (value, value_env) {
+                    (Some(value), _) if !value.is_empty() => value.clone(),
+                    (_, Some(env)) => std::env::var(env)
+                        .map_err(|_| format!("auth env var `{env}` is not set"))?,
+                    _ => return Err("header auth needs `value` or `value_env`".to_owned()),
+                };
+                Ok((name.clone(), resolved))
+            }
+        }
+    }
+
+    /// Redacted description for status/health (never the secret).
+    pub fn kind(&self) -> String {
+        match self {
+            McpAuth::Bearer { .. } => "bearer".to_owned(),
+            McpAuth::Header { name, .. } => format!("header:{name}"),
+        }
+    }
+}
+
 /// How to reach one MCP server. Exactly one transport is set:
 /// stdio (child process command) or Streamable HTTP (`url`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,6 +117,9 @@ pub struct McpServerConfig {
     /// Streamable HTTP transport: base URL of the MCP endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Static auth for the HTTP transport (SPK-007). Rejected on stdio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<McpAuth>,
 }
 
 impl McpServerConfig {
@@ -58,7 +128,16 @@ impl McpServerConfig {
             return Err(McpError::InvalidConfig("missing `name`".to_owned()));
         }
         match (&self.command, &self.url) {
-            (Some(_), None) | (None, Some(_)) => Ok(()),
+            (Some(_), None) => {
+                if self.auth.is_some() {
+                    return Err(McpError::InvalidConfig(format!(
+                        "server `{}` sets `auth` on a stdio transport; auth applies to Streamable HTTP only",
+                        self.name
+                    )));
+                }
+                Ok(())
+            }
+            (None, Some(_)) => Ok(()),
             (Some(_), Some(_)) => Err(McpError::InvalidConfig(format!(
                 "server `{}` sets both `command` and `url`",
                 self.name
@@ -87,6 +166,10 @@ pub struct McpServerStatus {
     pub tools: usize,
     /// Disabled servers stay registered but their tools leave the catalog.
     pub disabled: bool,
+    /// Redacted auth description (`bearer`, `header:x-api-key`) — the
+    /// secret itself never leaves the process (SPEC-008).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<String>,
 }
 
 /// The live half of a connection: the negotiated session plus the tools it
@@ -127,7 +210,46 @@ impl McpConnection {
                     .map_err(|e| McpError::Connect(config.name.clone(), e.to_string()))?
             }
             (None, Some(url)) => {
-                let transport = StreamableHttpClientTransport::from_uri(url.as_str());
+                // Auth (SPK-007): a preconfigured reqwest client carries the
+                // credential as a default header, so EVERY request of the
+                // transport — initialize, tool calls and the SSE stream —
+                // authenticates. Reconnect rebuilds the client from the same
+                // config (env-referenced secrets re-resolve).
+                let transport = match &config.auth {
+                    Some(auth) => {
+                        let (name, value) = auth.resolve().map_err(|e| {
+                            McpError::Connect(config.name.clone(), e)
+                        })?;
+                        let header_name =
+                            reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                                .map_err(|e| {
+                                    McpError::Connect(
+                                        config.name.clone(),
+                                        format!("invalid auth header name `{name}`: {e}"),
+                                    )
+                                })?;
+                        let header_value = reqwest::header::HeaderValue::from_str(&value)
+                            .map_err(|e| {
+                                McpError::Connect(
+                                    config.name.clone(),
+                                    format!("invalid auth header value: {e}"),
+                                )
+                            })?;
+                        let mut headers = reqwest::header::HeaderMap::new();
+                        headers.insert(header_name, header_value);
+                        let client = reqwest::Client::builder()
+                            .default_headers(headers)
+                            .build()
+                            .map_err(|e| {
+                                McpError::Connect(config.name.clone(), e.to_string())
+                            })?;
+                        StreamableHttpClientTransport::with_client(
+                            client,
+                            StreamableHttpClientTransportConfig::with_uri(url.as_str()),
+                        )
+                    }
+                    None => StreamableHttpClientTransport::from_uri(url.as_str()),
+                };
                 serve_client(ClientInfo::default(), transport)
                     .await
                     .map_err(|e| McpError::Connect(config.name.clone(), e.to_string()))?
@@ -172,6 +294,7 @@ impl McpConnection {
             },
             tools: inner.descriptors.len(),
             disabled: false,
+            auth: self.config.auth.as_ref().map(McpAuth::kind),
         }
     }
 

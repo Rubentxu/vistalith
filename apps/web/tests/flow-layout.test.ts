@@ -43,7 +43,12 @@ describe("runElkLayout (slice 21, SPK-010)", () => {
     const result = await runElkLayout(nodes, edges);
     const step1 = result.positions["work:workflow-node:step-1"];
     const step2 = result.positions["work:workflow-node:step-2"];
-    const distance = Math.hypot(step1.x - step2.x, step1.y - step2.y);
+    expect(step1).toBeDefined();
+    expect(step2).toBeDefined();
+    const distance = Math.hypot(
+      (step1?.x ?? 0) - (step2?.x ?? 0),
+      (step1?.y ?? 0) - (step2?.y ?? 0),
+    );
     expect(distance).toBeGreaterThan(0);
   });
 

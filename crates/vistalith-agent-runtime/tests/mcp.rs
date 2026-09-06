@@ -19,6 +19,7 @@ fn echo_config() -> McpServerConfig {
         command: Some(env!("CARGO_BIN_EXE_mcp-echo").to_owned()),
         args: Vec::new(),
         url: None,
+        auth: None,
     }
 }
 
@@ -180,6 +181,7 @@ async fn config_validation_rejects_double_or_missing_transports() {
         command: Some("a".to_owned()),
         args: vec![],
         url: Some("http://localhost".to_owned()),
+        auth: None,
     };
     assert!(both.validate().is_err());
     let neither = McpServerConfig {
@@ -187,6 +189,7 @@ async fn config_validation_rejects_double_or_missing_transports() {
         command: None,
         args: vec![],
         url: None,
+        auth: None,
     };
     assert!(neither.validate().is_err());
     // Wrong transport is surfaced as a connection error, not a panic.
@@ -195,6 +198,7 @@ async fn config_validation_rejects_double_or_missing_transports() {
         command: Some("/nonexistent/binary/here".to_owned()),
         args: vec![],
         url: None,
+        auth: None,
     };
     assert!(McpConnection::connect(bogus).await.is_err());
 }

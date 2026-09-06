@@ -486,7 +486,14 @@ export type McpServerConfig = {
   args?: string[];
   /** Streamable HTTP transport: base URL of the MCP endpoint. */
   url?: string;
+  /** Static auth for the HTTP transport (SPK-007). Rejected on stdio.
+   *  Secrets may be inline or environment-referenced (`tokenEnv`). */
+  auth?: McpAuth;
 };
+
+export type McpAuth =
+  | { type: "bearer"; token?: string; token_env?: string }
+  | { type: "header"; name: string; value?: string; value_env?: string };
 
 export interface McpServerInfo {
   name: string;
@@ -494,6 +501,9 @@ export interface McpServerInfo {
   status: "connected" | "unhealthy";
   tools: number;
   disabled: boolean;
+  /** Redacted auth description (`bearer`, `header:x-api-key`) — the
+   *  secret itself never leaves the server process. */
+  auth?: string;
 }
 
 // --- Graph algorithms + semantic context view (SPEC-005, slice 7) --------------

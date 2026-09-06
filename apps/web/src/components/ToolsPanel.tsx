@@ -141,6 +141,14 @@ export function ToolsPanel({
                   {server.disabled ? (
                     <span className="badge badge-deprecated">disabled</span>
                   ) : null}
+                  {server.auth ? (
+                    <span
+                      className="badge badge-advisory"
+                      title="authenticated server (secret never leaves vistalithd)"
+                    >
+                      🔒 {server.auth}
+                    </span>
+                  ) : null}
                   <span className="tools-source">{server.tools} tools</span>
                 </div>
                 <div className="mcp-server-actions">

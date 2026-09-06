@@ -41,6 +41,7 @@ y evoluciona este repositorio. El baseline completo de planificación está en
 | 19 | Round-trip LikeC4 — export/import del DSL C4 con identidad `SubjectRef` en metadatos + diff de revisión de arquitectura (SPK-008) | hecho |
 | 20 | Bindings semánticos Excalidraw — bindings durables forma→sujeto claveados por contenido, nunca por ids de forma del renderer (SPK-009, ADR-014) | hecho |
 | 21 | Lente workflow/agent — React Flow + ELK con layout off-main-thread a 1k/10k nodos y estados en vivo sin re-layout (SPK-010, ADR-015) | hecho |
+| 22 | Auth MCP remota — credenciales bearer/header (inline o por env) en Streamable HTTP, estado redactado, reconnect re-autentica (SPK-007 **cerrado**) | hecho |
 
 ## Decisiones normativas del baseline
 
@@ -99,8 +100,11 @@ de SDDK — si la capacidad pertenece a SDDK, se llama a SDDK directamente.
    ejecutan libres, las de clase write necesitan un grant temporal con scope
    (por llamada, consumible, revocable), y los denies explícitos siempre
    ganan. Toda llamada — concedida o rechazada — es un evento durable
-   `ToolInvoked` que lleva la fuente de la tool. Los permisos de Vistalith
-   restringen; nunca debilitan la policy de SDDK.
+   `ToolInvoked` que lleva la fuente de la tool. Las credenciales MCP
+   (bearer/header, inline o por env) autentican cada petición del
+   transporte, y los secretos nunca salen del proceso del servidor: el
+   estado y el health llevan solo un kind de auth redactado. Los permisos
+   de Vistalith restringen; nunca debilitan la policy de SDDK.
 8. Los comportamientos reactivos (SPEC-003) solo emiten eventos advisory —
    nunca efectos ocultos, nunca estado SDDK autoritativo (forzado
    estructuralmente: el único payload que un behavior puede emitir es
@@ -176,6 +180,7 @@ docs/SURREALDB-SPIKE.md  # informe y veredicto de la puerta SPK-003
 docs/LIKEC4-SPIKE.md   # informe del round-trip LikeC4 (SPK-008)
 docs/EXCALIDRAW-BINDINGS.md  # informe de bindings de canvas (SPK-009)
 docs/REACTFLOW-ELK-SPIKE.md  # informe de la lente workflow (SPK-010, con mediciones)
+docs/MCP-AUTH.md       # diseño y evidencia de auth remota (SPK-007)
 vistalith-sddk-baseline-v5-graph-first-2026-09-04/  # baseline de planificación (docs)
 ```
 
@@ -354,8 +359,14 @@ Seleccionar un sujeto en cualquier lente propaga el mismo `SubjectRef`.
 MCP: conecta un servidor de tools en runtime —
 `POST /mcp/servers {"name":"echo","command":"./target/debug/mcp-echo"}`
 (stdio) o `{"name":"docs","url":"http://localhost:8100/mcp"}` (Streamable
-HTTP). El binario fixture `mcp-echo` viene en el workspace para demos y
-tests. `--provider fake --fake-tool TOOL_ID --fake-args '{...}'` scripted un
+HTTP). Los servidores remotos se autentican con
+`"auth":{"type":"bearer","token_env":"MI_TOKEN"}` (o un header estático
+`{"type":"header","name":"x-api-key","value":"…"}`) — cada petición del
+transporte lleva la credencial, el reconnect re-autentica, y el estado /
+health muestran solo el kind redactado (`bearer`, `header:x-api-key`),
+nunca el secreto (SPK-007 cerrado; ver
+[`docs/MCP-AUTH.md`](docs/MCP-AUTH.md)). El binario fixture `mcp-echo`
+viene en el workspace para demos y tests. `--provider fake --fake-tool TOOL_ID --fake-args '{...}'` scripted un
 round de tool determinista para demos offline.
 
 ## Decisión de almacenamiento (SPK-003)
